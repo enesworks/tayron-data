@@ -10,6 +10,8 @@ Each successful snapshot is immutable in a GitHub Release. A new game patch alwa
 
 If a scrape or validation fails, no release is published and the prior `latest.json` remains active. A retry reuses completed, validated page checkpoints and retries only missing or unavailable pages; it does not repeat the full crawl. After a successful run, those checkpoints are cleared so the next daily run refreshes the statistics instead of treating an old same-patch scrape as current.
 
+For patch 16.20 only, the Master-tier Lillia-vs-Bot matchup cell is explicitly omitted because its source page returned a server-error document. Tayron treats that one cell as unavailable and falls back to the general lane win rate; it does not fabricate or reuse a matchup rate for it.
+
 ## Required repository secret
 
 GitHub Actions requires `TAYRON_DATA_SIGNING_KEY`, an Ed25519 private key in PEM format. Its matching public key is embedded in Tayron. Never put the private key in this repository. GitHub Releases and the raw `latest.json` file are public, read-only data distribution endpoints.

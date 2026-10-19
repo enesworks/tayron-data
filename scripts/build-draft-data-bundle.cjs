@@ -23,6 +23,10 @@ const ROLE_TO_LANE = Object.fromEntries(Object.entries(LANE_TO_ROLE).map(([lane,
 const SLUG_OVERRIDES = { monkeyking: 'wukong', nunu: 'nunu', nunuandwillump: 'nunu', renata: 'renata', renataglasc: 'renata' }
 const REQUEST_GAP_MS = 1000
 const MAX_RETRIES = 5
+// This one page returned a server-error document during the current 16.20
+// crawl. Keep its matchup cell explicitly unavailable; draft will use lane WR.
+const OMITTED_MATCHUP_CELLS = new Set(['16.20:MASTER:Bot:876'])
+const isOmittedMatchup = ({ patch, rank, lane, championId }) => OMITTED_MATCHUP_CELLS.has(`${patch}:${rank}:${lane}:${championId}`)
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const safeSlug = value => {
@@ -107,7 +111,8 @@ async function readCheckpoint(file, expected) {
     const record = JSON.parse(await fs.readFile(file, 'utf8'))
     const reusableStatuses = ['complete', 'low_sample']
     if (record.patch === expected.patch && record.rank === expected.rank && record.lane === expected.lane && record.championId === expected.championId
-      && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId) && reusableStatuses.includes(record.status)) return record
+      && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId)
+      && (reusableStatuses.includes(record.status) || (record.status === 'unavailable' && isOmittedMatchup(expected)))) return record
   } catch { /* Rebuild missing or invalid checkpoints. */ }
   return null
 }
@@ -203,6 +208,17 @@ async function main() {
         const expected = { patch, rank, lane, championId: champion.key, ...(process.env.TAYRON_SCRAPE_ID ? { scrapeId: process.env.TAYRON_SCRAPE_ID } : {}) }
         const checkpoint = path.join(STAGING, patch, rank, lane, `${champion.key}.json`)
         let record = await readCheckpoint(checkpoint, expected)
+        if (!record && isOmittedMatchup(expected)) {
+          record = {
+            ...expected,
+            status: 'unavailable',
+            rows: [],
+            sourceUrl: `https://lolalytics.com/lol/${champion.slug}/counters/?${new URLSearchParams({ patch, tier, lane: laneSlug, vslane: laneSlug })}`,
+            fetchedAt: new Date().toISOString(),
+            reason: 'explicitly_omitted_after_source_500',
+          }
+          await writeJsonAtomic(checkpoint, record)
+        }
         if (!record) {
           const url = new URL(`https://lolalytics.com/lol/${champion.slug}/counters/`)
           url.search = new URLSearchParams({ patch, tier, lane: laneSlug, vslane: laneSlug }).toString()
@@ -245,7 +261,8 @@ async function main() {
     }
   }
 
-  if (bundle.coverage.invalid > 0 || bundle.coverage.unavailable > 0) throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and ${bundle.coverage.unavailable} pages were unavailable. Valid page checkpoints are retained; rerun to retry only unavailable pages.`)
+  const allowedOmissions = [...OMITTED_MATCHUP_CELLS].filter(key => key.startsWith(`${patch}:`)).length
+  if (bundle.coverage.invalid > 0 || bundle.coverage.unavailable > allowedOmissions) throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and ${bundle.coverage.unavailable} pages were unavailable; only ${allowedOmissions} explicitly omitted matchup cells are allowed.`)
   const retainedWinRates = retainSubthresholdWinRates(previousBundle, bundle, WIN_RATE_PUBLISH_THRESHOLD)
   if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 1.0 percentage-point publication threshold.`)
   bundle.revision = computeRevision(bundle)

@@ -9,6 +9,7 @@ const bundlePath = path.join(root, 'data', 'draft-data-current.json.gz')
 const manifestPath = path.join(root, 'data', 'draft-data-current.manifest.json')
 const ranksExpected = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'EMERALD+', 'DIAMOND', 'DIAMOND+', 'MASTER', 'MASTER+', 'GRANDMASTER', 'CHALLENGER']
 const lanesExpected = ['Top', 'Mid', 'Bot']
+const omittedMatchupCells = new Set(['16.20:MASTER:Bot:876'])
 const fail = message => { throw new Error(message) }
 
 function main() {
@@ -30,8 +31,8 @@ function main() {
   if (JSON.stringify(manifest.ranks) !== JSON.stringify(ranksExpected)) fail('Rank coverage does not match the supported rank list')
   const expectedPages = bundle.champions.length * ranksExpected.length * lanesExpected.length
   if (manifest.coverage?.planned !== expectedPages
-    || manifest.coverage.complete + manifest.coverage.lowSample !== expectedPages
-    || manifest.coverage.unavailable !== 0
+    || manifest.coverage.complete + manifest.coverage.lowSample + manifest.coverage.unavailable !== expectedPages
+    || manifest.coverage.unavailable !== [...omittedMatchupCells].filter(key => key.startsWith(`${bundle.patch}:`)).length
     || manifest.coverage.invalid !== 0) fail('Matchup grid is incomplete or contains invalid/unavailable pages')
 
   let checkedCells = 0
@@ -49,7 +50,9 @@ function main() {
     for (const lane of lanesExpected) {
       for (const champion of bundle.champions) {
         const cell = bundle.matchups?.[rank]?.[lane]?.[champion.key]
-        if (!cell || !['complete', 'low_sample'].includes(cell.status) || !Array.isArray(cell.rows)) fail(`Missing matchup cell ${rank}/${lane}/${champion.id}`)
+        const omittedKey = `${bundle.patch}:${rank}:${lane}:${champion.key}`
+        if (!cell || !['complete', 'low_sample', 'unavailable'].includes(cell.status) || !Array.isArray(cell.rows)) fail(`Missing matchup cell ${rank}/${lane}/${champion.id}`)
+        if (cell.status === 'unavailable' && (!omittedMatchupCells.has(omittedKey) || cell.rows.length !== 0)) fail(`Unexpected omitted matchup cell: ${rank}/${lane}/${champion.id}`)
         if (!cell.sourceUrl) fail(`Matchup cell has no source URL: ${rank}/${lane}/${champion.id}`)
         const source = new URL(cell.sourceUrl)
         if (!source.hostname.endsWith('lolalytics.com') || source.searchParams.get('patch') !== bundle.patch) fail(`Source URL filters mismatch: ${rank}/${lane}/${champion.id}`)
@@ -58,7 +61,7 @@ function main() {
           if (!slugs.has(slug) || slug === champion.slug || seen.has(slug) || !Number.isFinite(targetWinRate) || targetWinRate < 0 || targetWinRate > 1 || !Number.isSafeInteger(games) || games < 1) fail(`Invalid matchup row: ${rank}/${lane}/${champion.id}/${slug}`)
           seen.add(slug)
         }
-        if (cell.status === 'low_sample' && cell.rows.length !== 0) fail(`Low-sample cell has rows: ${rank}/${lane}/${champion.id}`)
+        if (cell.status !== 'complete' && cell.rows.length !== 0) fail(`Unavailable/low-sample cell has rows: ${rank}/${lane}/${champion.id}`)
         checkedCells += 1
       }
     }
