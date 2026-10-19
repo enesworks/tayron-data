@@ -1,0 +1,106 @@
+name: Build and publish draft statistics
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 4 * * *'
+
+concurrency:
+  group: publish-draft-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Restore validated page checkpoints
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/draft-data-staging
+          key: draft-data-${{ github.run_id }}
+          restore-keys: draft-data-
+
+      - name: Resume this snapshot or begin a fresh scrape
+        run: |
+          mkdir -p .cache/draft-data-staging
+          marker=.cache/draft-data-staging/.scrape-id
+          scrape_id="$(cat "$marker" 2>/dev/null || true)"
+          if [ -z "$scrape_id" ] || [ "$scrape_id" = "next" ]; then
+            scrape_id="$GITHUB_RUN_ID"
+          fi
+          printf '%s' "$scrape_id" > "$marker"
+          echo "TAYRON_SCRAPE_ID=$scrape_id" >> "$GITHUB_ENV"
+
+      - name: Download previous full snapshot for delta comparison
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          previous_tag="$(gh release list --repo enesworks/tayron-data --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [ -n "$previous_tag" ]; then
+            gh release download "$previous_tag" --repo enesworks/tayron-data --pattern draft-data-current.json.gz --dir data
+          fi
+
+      - name: Build all ranks and matchups
+        env:
+          TAYRON_DATA_STAGING_DIR: ${{ github.workspace }}/.cache/draft-data-staging
+        run: node scripts/build-draft-data-bundle.cjs
+
+      - name: Verify complete snapshot and build update package
+        run: |
+          node scripts/verify-draft-data-bundle.cjs
+
+      - name: Publish immutable data release and signed feed
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAYRON_DATA_SIGNING_KEY: ${{ secrets.TAYRON_DATA_SIGNING_KEY }}
+        run: |
+          kind="$(node -p "require('./data/draft-data-update-current.json').kind")"
+          if [ "$kind" = "unchanged" ]; then
+            echo "Validated data revision is unchanged; no release is needed."
+            exit 0
+          fi
+          node scripts/sign-latest.cjs
+          revision="$(node -p "require('./data/draft-data-update-current.json').revision")"
+          patch="$(node -p "require('./data/draft-data-update-current.json').patch")"
+          tag="data-${revision}"
+          artifact="$(node -p "require('./data/draft-data-update-current.json').artifact")"
+          assets=(data/draft-data-current.json.gz data/draft-data-current.manifest.json data/draft-data-update-current.json)
+          if [ "$artifact" != "draft-data-current.json.gz" ]; then assets+=("data/$artifact"); fi
+          if ! gh release view "$tag" --repo enesworks/tayron-data >/dev/null 2>&1; then
+            gh release create "$tag" "${assets[@]}" \
+              --repo enesworks/tayron-data \
+              --title "LoL ${patch} data ${revision:0:12}" \
+              --notes "Validated champion, role and matchup snapshot. SHA-256 and coverage are in the attached manifests." \
+              --latest
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish draft data ${patch} ${revision:0:12}"
+            git push origin HEAD:main
+          fi
+
+      - name: Mark checkpoints ready for the next fresh snapshot
+        if: ${{ success() }}
+        run: |
+          find .cache/draft-data-staging -mindepth 1 -maxdepth 1 ! -name .scrape-id -exec rm -rf {} +
+          printf 'next' > .cache/draft-data-staging/.scrape-id
+
+      - name: Save checkpoints for the next run or retry
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/draft-data-staging
+          key: draft-data-${{ github.run_id }}

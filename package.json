@@ -1,0 +1,1 @@
+{"name":"tayron-data-feed","private":true,"scripts":{"data:bundle":"node scripts/build-draft-data-bundle.cjs","data:verify":"node scripts/verify-draft-data-bundle.cjs"}}

@@ -1,0 +1,75 @@
+const fs = require('node:fs')
+const path = require('node:path')
+const crypto = require('node:crypto')
+const zlib = require('node:zlib')
+const { computeRevision } = require('../electron/draft-data-format.cjs')
+
+const root = path.resolve(__dirname, '..')
+const bundlePath = path.join(root, 'data', 'draft-data-current.json.gz')
+const manifestPath = path.join(root, 'data', 'draft-data-current.manifest.json')
+const ranksExpected = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'EMERALD+', 'DIAMOND', 'DIAMOND+', 'MASTER', 'MASTER+', 'GRANDMASTER', 'CHALLENGER']
+const lanesExpected = ['Top', 'Mid', 'Bot']
+const fail = message => { throw new Error(message) }
+
+function main() {
+  const compressed = fs.readFileSync(bundlePath)
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  const actualHash = crypto.createHash('sha256').update(compressed).digest('hex')
+  if (manifest.schemaVersion !== 1 || manifest.sha256 !== actualHash) fail('Bundle checksum or schema version does not match the manifest')
+  const bundle = JSON.parse(zlib.gunzipSync(compressed).toString('utf8'))
+  const ids = new Set()
+  const slugs = new Set()
+  if (bundle.schemaVersion !== 1 || bundle.patch !== manifest.patch || bundle.dataDragonVersion !== manifest.dataDragonVersion) fail('Bundle and manifest patch metadata differ')
+  if (bundle.revision !== computeRevision(bundle) || manifest.revision !== bundle.revision) fail('Bundle content revision does not match its manifest')
+  if (!Array.isArray(bundle.champions) || bundle.champions.length !== manifest.championCount || bundle.champions.length < 100) fail('Champion catalog is missing or inconsistent')
+  for (const champion of bundle.champions) {
+    if (!Number.isSafeInteger(champion.key) || !champion.id || !champion.slug || ids.has(champion.key) || slugs.has(champion.slug)) fail(`Invalid or duplicate champion ${champion?.id}`)
+    ids.add(champion.key)
+    slugs.add(champion.slug)
+  }
+  if (JSON.stringify(manifest.ranks) !== JSON.stringify(ranksExpected)) fail('Rank coverage does not match the supported rank list')
+  const expectedPages = bundle.champions.length * ranksExpected.length * lanesExpected.length
+  if (manifest.coverage?.planned !== expectedPages
+    || manifest.coverage.complete + manifest.coverage.lowSample !== expectedPages
+    || manifest.coverage.unavailable !== 0
+    || manifest.coverage.invalid !== 0) fail('Matchup grid is incomplete or contains invalid/unavailable pages')
+
+  let checkedCells = 0
+  for (const rank of ranksExpected) {
+    const meta = bundle.meta?.[rank]
+    if (!meta || !Array.isArray(meta.rows) || !Array.isArray(meta.missing)) fail(`Missing role metadata for ${rank}`)
+    const roleCells = new Set()
+    for (const row of meta.rows) {
+      if (!ids.has(row[0]) || !['Top', 'Mid', 'Bot', 'Jungle', 'Support', 'All roles'].includes(row[1])
+        || !Number.isSafeInteger(row[2]) || row[2] < 0 || !Number.isFinite(row[3]) || row[3] < 0 || row[3] > 1) fail(`Invalid role metadata row for ${rank}`)
+      roleCells.add(`${row[0]}:${row[1]}`)
+    }
+    const missing = new Set(meta.missing.map(([id, lane]) => `${id}:${lane}`))
+    if (roleCells.size + missing.size !== bundle.champions.length * 6 || [...roleCells].some(cell => missing.has(cell))) fail(`Role metadata missing-cell accounting failed for ${rank}`)
+    for (const lane of lanesExpected) {
+      for (const champion of bundle.champions) {
+        const cell = bundle.matchups?.[rank]?.[lane]?.[champion.key]
+        if (!cell || !['complete', 'low_sample'].includes(cell.status) || !Array.isArray(cell.rows)) fail(`Missing matchup cell ${rank}/${lane}/${champion.id}`)
+        if (!cell.sourceUrl) fail(`Matchup cell has no source URL: ${rank}/${lane}/${champion.id}`)
+        const source = new URL(cell.sourceUrl)
+        if (!source.hostname.endsWith('lolalytics.com') || source.searchParams.get('patch') !== bundle.patch) fail(`Source URL filters mismatch: ${rank}/${lane}/${champion.id}`)
+        const seen = new Set()
+        for (const [slug, targetWinRate, games] of cell.rows) {
+          if (!slugs.has(slug) || slug === champion.slug || seen.has(slug) || !Number.isFinite(targetWinRate) || targetWinRate < 0 || targetWinRate > 1 || !Number.isSafeInteger(games) || games < 1) fail(`Invalid matchup row: ${rank}/${lane}/${champion.id}/${slug}`)
+          seen.add(slug)
+        }
+        if (cell.status === 'low_sample' && cell.rows.length !== 0) fail(`Low-sample cell has rows: ${rank}/${lane}/${champion.id}`)
+        checkedCells += 1
+      }
+    }
+  }
+  if (checkedCells !== expectedPages) fail(`Expected ${expectedPages} matchup cells, found ${checkedCells}`)
+  console.log(`Verified patch ${bundle.patch}: ${bundle.champions.length} champions, ${ranksExpected.length} rank scopes, ${lanesExpected.join('/')} matchups (${checkedCells} cells).`)
+  console.log(`Complete=${manifest.coverage.complete}; low-sample (explicit)=${manifest.coverage.lowSample}; role-metadata missing source cells=${ranksExpected.reduce((sum, rank) => sum + bundle.meta[rank].missing.length, 0)}.`)
+  console.log(`Compressed size=${manifest.compressedBytes} bytes; sha256=${actualHash}`)
+}
+
+try { main() } catch (error) {
+  console.error(error.stack || error.message)
+  process.exitCode = 1
+}
