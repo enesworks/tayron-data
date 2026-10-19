@@ -3,16 +3,16 @@
     "formatVersion": 1,
     "schemaVersion": 1,
     "patch": "16.20",
-    "generatedAt": "2026-10-19T01:49:51.692Z",
-    "revision": "03653d570137f20808eeda6c35867c99c0fbb6b5ee21b958e8457559a2a43c2c",
+    "generatedAt": "2026-10-19T10:02:52.629Z",
+    "revision": "7d9c3e01ae3207d84babcb52cef11b5da2abba8b14fa396c6be91ed4e76b1351",
     "kind": "full",
     "baseRevision": null,
-    "artifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-03653d570137f20808eeda6c35867c99c0fbb6b5ee21b958e8457559a2a43c2c/draft-data-current.json.gz",
-    "sha256": "598a258d722d46c385a575a9bacdd45b4a92bdb3e39832a9ca58d48815d5b937",
-    "compressedBytes": 1017215,
-    "fullArtifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-03653d570137f20808eeda6c35867c99c0fbb6b5ee21b958e8457559a2a43c2c/draft-data-current.json.gz",
-    "fullSha256": "598a258d722d46c385a575a9bacdd45b4a92bdb3e39832a9ca58d48815d5b937",
-    "fullCompressedBytes": 1017215
+    "artifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-7d9c3e01ae3207d84babcb52cef11b5da2abba8b14fa396c6be91ed4e76b1351/draft-data-current.json.gz",
+    "sha256": "f79b7b32694cc4331e6ce386d10cc22ec031cff4c255ef8c4649444c179e254c",
+    "compressedBytes": 1026441,
+    "fullArtifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-7d9c3e01ae3207d84babcb52cef11b5da2abba8b14fa396c6be91ed4e76b1351/draft-data-current.json.gz",
+    "fullSha256": "f79b7b32694cc4331e6ce386d10cc22ec031cff4c255ef8c4649444c179e254c",
+    "fullCompressedBytes": 1026441
   },
-  "signature": "+09QnxPqUi3rNeN6prERhKeolKgnztgK7uU2i/m4V/TpHkEl0veJ6FH9d2U3dTgV0jYa0a6+PQh7dchW779sAA=="
+  "signature": "LmO03AwnPIWUBrcf0AZJTE73q2jjgd4JKdS5WCBFRTRelIGeAQVz4QVqTsHOaZye4Pnp90qjKRDlF2RP6SPgDA=="
 }
