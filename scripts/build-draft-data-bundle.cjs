@@ -18,6 +18,8 @@ const TIERS = [
   ['MASTER+', 'master_plus'], ['GRANDMASTER', 'grandmaster'], ['CHALLENGER', 'challenger'],
 ]
 const LANES = [['Top', 'top'], ['Mid', 'middle'], ['Bot', 'bottom']]
+const ITEM_LANES = [['Top', 'top'], ['Jungle', 'jungle'], ['Mid', 'middle'], ['Bot', 'bottom'], ['Support', 'support']]
+const MIN_ITEM_BUILD_GAMES = 100
 const LANE_TO_ROLE = { Top: 'TOP', Mid: 'MIDDLE', Bot: 'BOTTOM', Jungle: 'JUNGLE', Support: 'UTILITY', 'All roles': 'ALL' }
 const ROLE_TO_LANE = Object.fromEntries(Object.entries(LANE_TO_ROLE).map(([lane, role]) => [role, lane]))
 const SLUG_OVERRIDES = { monkeyking: 'wukong', nunu: 'nunu', nunuandwillump: 'nunu', renata: 'renata', renataglasc: 'renata' }
@@ -110,6 +112,72 @@ function classifyMatchupPage(html, request) {
   if (!rows.length && hasInsufficientMarker) return { status: 'low_sample', rows, metadata }
   if (!rows.length) return { status: 'invalid', reason: 'no_rows_without_low_sample_marker', metadata }
   return { status: 'complete', rows, metadata }
+}
+
+function decodeHtml(value) {
+  return String(value).replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#39;|&#x27;/gi, "'").replace(/&quot;/g, '"')
+}
+
+function itemSection(html, startLabel, endLabel) {
+  const start = new RegExp('(?:<!--t=[^>]+-->\\s*)?' + startLabel + '(?:<!---->)?', 'i').exec(html)
+  if (!start) return ''
+  const from = start.index + start[0].length
+  if (!endLabel) return html.slice(from)
+  const end = new RegExp('(?:<!--t=[^>]+-->\\s*)?' + endLabel + '(?:<!---->)?', 'i').exec(html.slice(from))
+  return end ? html.slice(from, from + end.index) : ''
+}
+
+function parseItemIcons(section) {
+  const items = []
+  const seen = new Set()
+  for (const match of section.matchAll(/<img\b[^>]*src=["'][^"']*\/item64\/(\d+)\.webp[^"']*["'][^>]*alt=["']([^"']*)["']/gi)) {
+    const id = Number(match[1])
+    if (!Number.isSafeInteger(id) || id < 1 || seen.has(id)) continue
+    seen.add(id)
+    items.push({ id, name: decodeHtml(match[2]) })
+  }
+  return items
+}
+
+function classifyItemBuildPage(html, request) {
+  const metadata = pageMetadata(html)
+  if (/404 Resource Not Found|Just a moment\./i.test(metadata.title)) return { status: 'unavailable', reason: 'source_page_not_found', metadata }
+  if (/^500 Internal Server Error$/i.test(metadata.title)) return { status: 'unavailable', reason: 'source_server_error_no_data', metadata }
+  const normalizeComparable = value => String(value).toLowerCase().replace(/[^a-z0-9]/g, '')
+  const titleOk = normalizeComparable(metadata.title).includes(normalizeComparable(request.championName))
+    && normalizeComparable(metadata.title).includes(normalizeComparable(request.laneSlug))
+  const patchOk = new RegExp('Patch\\s+' + request.patch.replace('.', '\\.') + '(?:\\D|$)', 'i').test(metadata.description)
+  if (!titleOk || !patchOk) return { status: 'invalid', reason: 'page_filters_do_not_match_request', metadata }
+  const startingItems = parseItemIcons(itemSection(html, 'Starting Items', 'Core Build'))
+  const coreItems = parseItemIcons(itemSection(html, 'Core Build', 'Item 4'))
+  const item4 = parseItemIcons(itemSection(html, 'Item 4', 'Item 5'))
+  const item5 = parseItemIcons(itemSection(html, 'Item 5', 'Item 6'))
+  const item6 = parseItemIcons(itemSection(html, 'Item 6', 'LEGEND:'))
+  const coreText = normalizeText(itemSection(html, 'Core Build', 'Item 4'))
+  const statMatch = coreText.match(/(\d{1,2}(?:\.\d+)?)\s*%\s*([\d,]+)/)
+  const games = statMatch ? Number(statMatch[2].replace(/,/g, '')) : 0
+  const winRate = statMatch ? Number(statMatch[1]) / 100 : null
+  const blocks = [
+    { type: 'Starting Items', items: startingItems }, { type: 'Core Items', items: coreItems },
+    { type: 'Item 4', items: item4 }, { type: 'Item 5', items: item5 }, { type: 'Item 6', items: item6 },
+  ].filter(block => block.items.length)
+  if (games < MIN_ITEM_BUILD_GAMES || !Number.isFinite(winRate) || !startingItems.length || coreItems.length < 2) return { status: 'insufficient', games, winRate, blocks, metadata }
+  return { status: 'ready', games, winRate, blocks, metadata }
+}
+
+function csvCell(value) {
+  const text = String(value ?? '')
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
+}
+
+async function readItemCheckpoint(file, expected) {
+  try {
+    const record = JSON.parse(await fs.readFile(file, 'utf8'))
+    if (record.patch === expected.patch && record.lane === expected.lane && record.championId === expected.championId
+      && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId)
+      && record.sourceUrl && ['ready', 'insufficient', 'unavailable'].includes(record.status)) return record
+  } catch { /* Rebuild missing or invalid checkpoints. */ }
+  return null
 }
 
 async function readCheckpoint(file, expected) {
@@ -205,11 +273,13 @@ async function main() {
     patch,
     dataDragonVersion: ddragonVersion,
     generatedAt: new Date().toISOString(),
-    providers: { matchups: 'LoLalytics', roleMeta: 'IESDev' },
+    providers: { matchups: 'LoLalytics', roleMeta: 'IESDev', itemBuilds: 'LoLalytics' },
     champions,
     meta: roleData.meta,
     metaCoverage: roleData.metaCoverage,
     matchups: {},
+    itemBuilds: {},
+    itemBuildCoverage: { planned: ITEM_LANES.length * champions.length, ready: 0, insufficient: 0, unavailable: 0, invalid: 0 },
     coverage: { planned: TIERS.length * LANES.length * champions.length, complete: 0, lowSample: 0, unavailable: 0, invalid: 0 },
   }
 
@@ -280,6 +350,54 @@ async function main() {
   if (bundle.coverage.invalid > 0 || unavailableCells.some(cell => !isSourceNoData(cell))) {
     throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and at least one of ${bundle.coverage.unavailable} unavailable pages is not an explicit empty-source/HTTP-500 result.`)
   }
+  const itemCsvRows = [['patch', 'championId', 'champion', 'lane', 'games', 'winRate', 'startingItems', 'coreItems', 'item4', 'item5', 'item6']]
+  for (const [lane, laneSlug] of ITEM_LANES) {
+    bundle.itemBuilds[lane] = {}
+    for (const champion of champions) {
+      const expected = { patch, lane, championId: champion.key, ...(process.env.TAYRON_SCRAPE_ID ? { scrapeId: process.env.TAYRON_SCRAPE_ID } : {}) }
+      const checkpoint = path.join(STAGING, patch, 'item-builds', lane, champion.key + '.json')
+      let record = await readItemCheckpoint(checkpoint, expected)
+      if (!record) {
+        const url = new URL('https://lolalytics.com/lol/' + champion.slug + '/build/')
+        url.search = new URLSearchParams({ patch, tier: 'all', lane: laneSlug, region: 'all', queue: '420' }).toString()
+        const sourceUrl = url.toString()
+        try {
+          const response = await fetchResponse(url)
+          const html = await response.text()
+          if (Buffer.byteLength(html) > 5 * 1024 * 1024) throw new Error('source_response_too_large')
+          const result = classifyItemBuildPage(html, { ...expected, championName: champion.name, laneSlug })
+          record = { ...expected, status: result.status, games: result.games || 0, winRate: result.winRate ?? null,
+            blocks: result.blocks || [], sourceUrl, sourceTitle: result.metadata.title, fetchedAt: new Date().toISOString(), reason: result.reason || null }
+          if (record.status === 'invalid') record.error = result.reason
+        } catch (error) {
+          record = { ...expected, status: 'unavailable', games: 0, winRate: null, blocks: [], sourceUrl, fetchedAt: new Date().toISOString(), reason: error.message }
+        }
+        await writeJsonAtomic(checkpoint, record)
+        await sleep(REQUEST_GAP_MS)
+      }
+      if (record.status === 'invalid') bundle.itemBuildCoverage.invalid += 1
+      else bundle.itemBuildCoverage[record.status] += 1
+      bundle.itemBuilds[lane][champion.key] = {
+        status: record.status, games: record.games || 0, winRate: record.winRate ?? null, blocks: record.blocks || [],
+        sourceUrl: record.sourceUrl, fetchedAt: record.fetchedAt, reason: record.reason || null,
+      }
+      if (record.status === 'ready') {
+        const byType = Object.fromEntries(record.blocks.map(block => [block.type, block.items.map(item => item.id)]))
+        itemCsvRows.push([patch, champion.key, champion.name, lane, record.games, record.winRate,
+          JSON.stringify(byType['Starting Items'] || []), JSON.stringify(byType['Core Items'] || []),
+          JSON.stringify(byType['Item 4'] || []), JSON.stringify(byType['Item 5'] || []), JSON.stringify(byType['Item 6'] || [])])
+      }
+    }
+    console.log('Item builds ' + lane + ': ' + champions.length + ' champion cells')
+  }
+  const unavailableItemBuilds = Object.values(bundle.itemBuilds).flatMap(byChampion => Object.values(byChampion)).filter(cell => cell.status === 'unavailable')
+  if (bundle.itemBuildCoverage.invalid > 0 || unavailableItemBuilds.some(cell => !['source_server_error_no_data', 'source_page_not_found'].includes(cell.reason))) {
+    throw new Error('Refusing to publish: item-build source/filter coverage is invalid or incomplete.')
+  }
+  const csvPath = path.join(OUTPUT, 'item-builds-current.csv')
+  const csvTemporary = csvPath + '.' + process.pid + '.tmp'
+  await fs.writeFile(csvTemporary, itemCsvRows.map(row => row.map(csvCell).join(',')).join('\n') + '\n', 'utf8')
+  await fs.rename(csvTemporary, csvPath)
   const retainedWinRates = retainSubthresholdWinRates(previousBundle, bundle, WIN_RATE_PUBLISH_THRESHOLD)
   if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 1.0 percentage-point publication threshold.`)
   bundle.revision = computeRevision(bundle)
@@ -304,6 +422,7 @@ async function main() {
     ranks: TIERS.map(([rank]) => rank),
     metaCoverage: bundle.metaCoverage,
     coverage: bundle.coverage,
+    itemBuildCoverage: bundle.itemBuildCoverage,
     revision: bundle.revision,
     uncompressedBytes: json.length,
     compressedBytes: compressed.length,
@@ -329,4 +448,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { classifyMatchupPage, parseMatchups }
+module.exports = { classifyItemBuildPage, classifyMatchupPage, parseMatchups }

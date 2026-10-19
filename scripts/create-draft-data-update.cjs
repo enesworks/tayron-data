@@ -13,6 +13,11 @@ function matchupRowMap(cell) {
   return new Map((cell?.rows || []).map(row => [row[0], row]))
 }
 
+function sameItemBuild(left, right) {
+  const project = cell => ({ status: cell?.status, blocks: cell?.blocks || [] })
+  return canonical(project(left)) === canonical(project(right))
+}
+
 function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD) {
   if (!previous || previous.schemaVersion !== current.schemaVersion || previous.patch !== current.patch
     || canonical(previous.champions) !== canonical(current.champions)) return true
@@ -56,6 +61,13 @@ function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLIS
       }
     }
   }
+  for (const lane of new Set([...Object.keys(previous.itemBuilds || {}), ...Object.keys(current.itemBuilds || {})])) {
+    const before = previous.itemBuilds?.[lane] || {}
+    const after = current.itemBuilds?.[lane] || {}
+    for (const championId of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (!sameItemBuild(before[championId], after[championId])) return true
+    }
+  }
   return false
 }
 
@@ -96,6 +108,11 @@ function sameMatchupData(left, right) {
   return canonical({ status: left?.status, rows: sortedRows(left?.rows) }) === canonical({ status: right?.status, rows: sortedRows(right?.rows) })
 }
 
+function sameItemBuildData(left, right) {
+  const project = cell => ({ status: cell?.status, games: cell?.games, winRate: cell?.winRate, blocks: cell?.blocks || [] })
+  return canonical(project(left)) === canonical(project(right))
+}
+
 function makeDelta(previous, current) {
   if (!previous || previous.schemaVersion !== current.schemaVersion || previous.patch !== current.patch
     || canonical(previous.champions) !== canonical(current.champions)) return null
@@ -107,8 +124,10 @@ function makeDelta(previous, current) {
     patch: current.patch,
     generatedAt: current.generatedAt,
     coverage: current.coverage,
+    itemBuildCoverage: current.itemBuildCoverage,
     metaReplacements: {},
     matchupReplacements: [],
+    itemBuildReplacements: [],
   }
   for (const rank of Object.keys(current.meta).sort()) {
     const before = previous.meta?.[rank]
@@ -123,6 +142,12 @@ function makeDelta(previous, current) {
         const before = previous.matchups?.[rank]?.[lane]?.[championId]
         if (!before || !sameMatchupData(before, cell)) delta.matchupReplacements.push([rank, lane, Number(championId), cell])
       }
+    }
+  }
+  for (const lane of Object.keys(current.itemBuilds || {}).sort()) {
+    for (const [championId, cell] of Object.entries(current.itemBuilds[lane])) {
+      const before = previous.itemBuilds?.[lane]?.[championId]
+      if (!before || !sameItemBuildData(before, cell)) delta.itemBuildReplacements.push([lane, Number(championId), cell])
     }
   }
   if (delta.targetRevision === delta.baseRevision) return { kind: 'unchanged', delta: null }
@@ -178,7 +203,7 @@ async function buildDraftDataUpdate({ previousPath, currentPath, currentManifest
       artifact = 'draft-data-delta-current.json.gz'
       artifactBytes = deltaBytes
       baseRevision = comparison.delta.baseRevision
-      changedCells = comparison.delta.matchupReplacements.length
+      changedCells = comparison.delta.matchupReplacements.length + comparison.delta.itemBuildReplacements.length
     }
   }
   await writeAtomic(path.join(outputDirectory, artifact), artifactBytes)

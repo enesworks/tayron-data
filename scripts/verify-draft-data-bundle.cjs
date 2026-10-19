@@ -66,6 +66,29 @@ function main() {
     }
   }
   if (checkedCells !== expectedPages) fail(`Expected ${expectedPages} matchup cells, found ${checkedCells}`)
+  if (bundle.itemBuilds) {
+    const lanes = ['Top', 'Jungle', 'Mid', 'Bot', 'Support']
+    const coverage = manifest.itemBuildCoverage
+    const expectedItems = bundle.champions.length * lanes.length
+    if (!coverage || coverage.planned !== expectedItems
+      || coverage.ready + coverage.insufficient + coverage.unavailable !== expectedItems || coverage.invalid !== 0) fail('Item-build coverage is incomplete')
+    let ready = 0
+    for (const lane of lanes) for (const champion of bundle.champions) {
+      const cell = bundle.itemBuilds[lane]?.[champion.key]
+      if (!cell || !['ready', 'insufficient', 'unavailable'].includes(cell.status) || !Number.isSafeInteger(cell.games) || cell.games < 0
+        || cell.winRate != null && (!Number.isFinite(cell.winRate) || cell.winRate < 0 || cell.winRate > 1) || !Array.isArray(cell.blocks)) fail(`Invalid item build ${lane}/${champion.id}`)
+      if (cell.status === 'ready' && cell.games < 100) fail(`Item-build sample is below minimum for ${lane}/${champion.id}`)
+      if (cell.status === 'ready') ready += 1
+      const source = new URL(cell.sourceUrl)
+      const expectedLane = ({ Top: 'top', Jungle: 'jungle', Mid: 'middle', Bot: 'bottom', Support: 'support' })[lane]
+      if (source.hostname !== 'lolalytics.com' || source.searchParams.get('patch') !== bundle.patch
+        || source.searchParams.get('lane') !== expectedLane || source.searchParams.get('tier') !== 'all') fail(`Item-build source filters mismatch: ${lane}/${champion.id}`)
+      for (const block of cell.blocks) {
+        if (!block.type || !Array.isArray(block.items) || block.items.some(item => !Number.isSafeInteger(item.id) || item.id < 1 || !item.name)) fail(`Invalid item block ${lane}/${champion.id}`)
+      }
+    }
+    if (ready !== coverage.ready) fail('Item-build ready count differs from its manifest')
+  }
   console.log(`Verified patch ${bundle.patch}: ${bundle.champions.length} champions, ${ranksExpected.length} rank scopes, ${lanesExpected.join('/')} matchups (${checkedCells} cells).`)
   console.log(`Complete=${manifest.coverage.complete}; low-sample (explicit)=${manifest.coverage.lowSample}; role-metadata missing source cells=${ranksExpected.reduce((sum, rank) => sum + bundle.meta[rank].missing.length, 0)}.`)
   console.log(`Compressed size=${manifest.compressedBytes} bytes; sha256=${actualHash}`)
