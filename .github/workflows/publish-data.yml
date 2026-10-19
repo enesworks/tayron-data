@@ -66,27 +66,27 @@ jobs:
           TAYRON_DATA_SIGNING_KEY: ${{ secrets.TAYRON_DATA_SIGNING_KEY }}
         run: |
           kind="$(node -p "require('./data/draft-data-update-current.json').kind")"
-          if [ "$kind" = "unchanged" ]; then
-            echo "Validated data revision is unchanged; no release is needed."
-            exit 0
-          fi
-          node scripts/sign-latest.cjs
           revision="$(node -p "require('./data/draft-data-update-current.json').revision")"
           patch="$(node -p "require('./data/draft-data-update-current.json').patch")"
-          tag="data-${revision}"
-          artifact="$(node -p "require('./data/draft-data-update-current.json').artifact")"
-          assets=(data/draft-data-current.json.gz data/draft-data-current.manifest.json data/draft-data-update-current.json)
-          if [ "$artifact" != "draft-data-current.json.gz" ]; then assets+=("data/$artifact"); fi
-          if ! gh release view "$tag" --repo enesworks/tayron-data >/dev/null 2>&1; then
-            gh release create "$tag" "${assets[@]}" \
-              --repo enesworks/tayron-data \
-              --title "LoL ${patch} data ${revision:0:12}" \
-              --notes "Validated champion, role and matchup snapshot. SHA-256 and coverage are in the attached manifests." \
-              --latest
+          if [ "$kind" != "unchanged" ]; then
+            node scripts/sign-latest.cjs
+            tag="data-${revision}"
+            artifact="$(node -p "require('./data/draft-data-update-current.json').artifact")"
+            assets=(data/draft-data-current.json.gz data/draft-data-current.manifest.json data/draft-data-update-current.json)
+            if [ "$artifact" != "draft-data-current.json.gz" ]; then assets+=("data/$artifact"); fi
+            if ! gh release view "$tag" --repo enesworks/tayron-data >/dev/null 2>&1; then
+              gh release create "$tag" "${assets[@]}" \
+                --repo enesworks/tayron-data \
+                --title "LoL ${patch} data ${revision:0:12}" \
+                --notes "Validated champion, role and matchup snapshot. SHA-256 and coverage are in the attached manifests." \
+                --latest
+            fi
           fi
+          DATA_PATCH="$patch" DATA_REVISION="$revision" DATA_UNCHANGED="$kind" node -e "const fs=require('node:fs'); fs.writeFileSync('last-checked.json', JSON.stringify({ checkedAt:new Date().toISOString(), patch:process.env.DATA_PATCH, revision:process.env.DATA_REVISION, unchanged:process.env.DATA_UNCHANGED === 'unchanged' }, null, 2)+'\\n')"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add latest.json
+          git add last-checked.json
+          if [ "$kind" != "unchanged" ]; then git add latest.json; fi
           if ! git diff --cached --quiet; then
             git commit -m "Publish draft data ${patch} ${revision:0:12}"
             git push origin HEAD:main
