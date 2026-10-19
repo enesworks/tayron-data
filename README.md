@@ -6,9 +6,9 @@ This public repository publishes validated League of Legends statistics for Tayr
 
 The scheduled GitHub Actions job runs daily and can also be started with **Actions → Build and publish draft statistics → Run workflow**. It downloads the previous full snapshot, refreshes source pages for the current game patch, resumes checkpoints only when retrying the same interrupted run, and validates all champion, rank, role, lane, and matchup coverage before publishing.
 
-Each successful snapshot is immutable in a GitHub Release. The release always contains a full gzip snapshot for recovery. If a verified delta is materially smaller, it is published too. `latest.json` points at those versioned release assets and is Ed25519-signed. Tayron verifies the signature and artifact hash before staging an update.
+Each successful snapshot is immutable in a GitHub Release. A new game patch always publishes regardless of the rate threshold. Within the same patch, win-rate changes are compared with the last published snapshot: changes below 1.0 percentage point are retained at the published value, and a new release is held until a meaningful data change occurs. Small daily movements therefore accumulate against the published baseline. The release always contains a full gzip snapshot for recovery. If a verified delta is materially smaller, it is published too. `latest.json` points at those versioned release assets and is Ed25519-signed. Tayron verifies the signature and artifact hash before staging an update.
 
-If a scrape or validation fails, no release is published and the prior `latest.json` remains active. A retry can continue from the failed run's validated page checkpoints. After a successful run, those checkpoints are cleared so the next daily run refreshes the statistics instead of treating an old same-patch scrape as current.
+If a scrape or validation fails, no release is published and the prior `latest.json` remains active. A retry reuses completed, validated page checkpoints and retries only missing or unavailable pages; it does not repeat the full crawl. After a successful run, those checkpoints are cleared so the next daily run refreshes the statistics instead of treating an old same-patch scrape as current.
 
 ## Required repository secret
 

@@ -3,7 +3,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const zlib = require('node:zlib')
 const { computeRevision, readGzipJson } = require('../electron/draft-data-format.cjs')
-const { buildDraftDataUpdate } = require('./create-draft-data-update.cjs')
+const { buildDraftDataUpdate, retainSubthresholdWinRates, WIN_RATE_PUBLISH_THRESHOLD } = require('./create-draft-data-update.cjs')
 
 const ROOT = path.resolve(__dirname, '..')
 const STAGING = process.env.TAYRON_DATA_STAGING_DIR
@@ -23,7 +23,6 @@ const ROLE_TO_LANE = Object.fromEntries(Object.entries(LANE_TO_ROLE).map(([lane,
 const SLUG_OVERRIDES = { monkeyking: 'wukong', nunu: 'nunu', nunuandwillump: 'nunu', renata: 'renata', renataglasc: 'renata' }
 const REQUEST_GAP_MS = 1000
 const MAX_RETRIES = 5
-const RETRY_UNAVAILABLE = process.argv.includes('--retry-unavailable')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const safeSlug = value => {
@@ -106,7 +105,7 @@ function classifyMatchupPage(html, request) {
 async function readCheckpoint(file, expected) {
   try {
     const record = JSON.parse(await fs.readFile(file, 'utf8'))
-    const reusableStatuses = RETRY_UNAVAILABLE ? ['complete', 'low_sample'] : ['complete', 'low_sample', 'unavailable']
+    const reusableStatuses = ['complete', 'low_sample']
     if (record.patch === expected.patch && record.rank === expected.rank && record.lane === expected.lane && record.championId === expected.championId
       && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId) && reusableStatuses.includes(record.status)) return record
   } catch { /* Rebuild missing or invalid checkpoints. */ }
@@ -246,7 +245,9 @@ async function main() {
     }
   }
 
-  if (bundle.coverage.invalid > 0 || bundle.coverage.unavailable > 0) throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and ${bundle.coverage.unavailable} pages were unavailable. Checkpoint data is retained; retry with --retry-unavailable after fixing connectivity or aliases.`)
+  if (bundle.coverage.invalid > 0 || bundle.coverage.unavailable > 0) throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and ${bundle.coverage.unavailable} pages were unavailable. Valid page checkpoints are retained; rerun to retry only unavailable pages.`)
+  const retainedWinRates = retainSubthresholdWinRates(previousBundle, bundle, WIN_RATE_PUBLISH_THRESHOLD)
+  if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 1.0 percentage-point publication threshold.`)
   bundle.revision = computeRevision(bundle)
   const json = Buffer.from(JSON.stringify(bundle))
   const compressed = zlib.gzipSync(json, { level: 9 })

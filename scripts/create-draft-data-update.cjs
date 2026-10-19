@@ -3,6 +3,93 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const zlib = require('node:zlib')
 const { canonical, computeRevision, readGzipJson } = require('../electron/draft-data-format.cjs')
+const WIN_RATE_PUBLISH_THRESHOLD = 0.01
+
+function metaRowMap(snapshot) {
+  return new Map((snapshot?.rows || []).map(row => [`${row[0]}:${row[1]}`, row]))
+}
+
+function matchupRowMap(cell) {
+  return new Map((cell?.rows || []).map(row => [row[0], row]))
+}
+
+function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD) {
+  if (!previous || previous.schemaVersion !== current.schemaVersion || previous.patch !== current.patch
+    || canonical(previous.champions) !== canonical(current.champions)) return true
+
+  const ranks = new Set([...Object.keys(previous.meta || {}), ...Object.keys(current.meta || {})])
+  for (const rank of ranks) {
+    const before = previous.meta?.[rank]
+    const after = current.meta?.[rank]
+    if (!before || !after || canonical(before.missing || []) !== canonical(after.missing || [])) return true
+    const oldRows = metaRowMap(before)
+    const newRows = metaRowMap(after)
+    if (oldRows.size !== newRows.size) return true
+    for (const [key, row] of newRows) {
+      const old = oldRows.get(key)
+      if (!old || Math.abs(row[3] - old[3]) >= threshold) return true
+      // Changes to role, tier, or strong/weak matchup metadata remain publishable;
+      // a games-count-only refresh does not trigger a release.
+      if (canonical([row[1], row[4], row[5], row[6], row[7], row[8]])
+        !== canonical([old[1], old[4], old[5], old[6], old[7], old[8]])) return true
+    }
+  }
+
+  const matchupRanks = new Set([...Object.keys(previous.matchups || {}), ...Object.keys(current.matchups || {})])
+  for (const rank of matchupRanks) {
+    const lanes = new Set([...Object.keys(previous.matchups?.[rank] || {}), ...Object.keys(current.matchups?.[rank] || {})])
+    for (const lane of lanes) {
+      const oldCells = previous.matchups?.[rank]?.[lane] || {}
+      const newCells = current.matchups?.[rank]?.[lane] || {}
+      const championIds = new Set([...Object.keys(oldCells), ...Object.keys(newCells)])
+      for (const championId of championIds) {
+        const oldCell = oldCells[championId]
+        const newCell = newCells[championId]
+        if (!oldCell || !newCell || oldCell.status !== newCell.status) return true
+        const oldRows = matchupRowMap(oldCell)
+        const newRows = matchupRowMap(newCell)
+        if (oldRows.size !== newRows.size) return true
+        for (const [slug, row] of newRows) {
+          const old = oldRows.get(slug)
+          if (!old || Math.abs(row[1] - old[1]) >= threshold) return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+function retainSubthresholdWinRates(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD) {
+  if (!previous || previous.schemaVersion !== current.schemaVersion || previous.patch !== current.patch
+    || canonical(previous.champions) !== canonical(current.champions)) return 0
+  let retained = 0
+  for (const [rank, snapshot] of Object.entries(current.meta || {})) {
+    const oldRows = metaRowMap(previous.meta?.[rank])
+    for (const row of snapshot.rows || []) {
+      const old = oldRows.get(`${row[0]}:${row[1]}`)
+      if (old && Math.abs(row[3] - old[3]) < threshold) {
+        if (row[3] !== old[3]) retained += 1
+        row[3] = old[3]
+      }
+    }
+  }
+  for (const [rank, lanes] of Object.entries(current.matchups || {})) {
+    for (const [lane, cells] of Object.entries(lanes || {})) {
+      const oldCells = previous.matchups?.[rank]?.[lane] || {}
+      for (const [championId, cell] of Object.entries(cells || {})) {
+        const oldRows = matchupRowMap(oldCells[championId])
+        for (const row of cell.rows || []) {
+          const old = oldRows.get(row[0])
+          if (old && Math.abs(row[1] - old[1]) < threshold) {
+            if (row[1] !== old[1]) retained += 1
+            row[1] = old[1]
+          }
+        }
+      }
+    }
+  }
+  return retained
+}
 
 function sameMatchupData(left, right) {
   const sortedRows = rows => [...(rows || [])].sort((a, b) => a[0].localeCompare(b[0]))
@@ -58,6 +145,19 @@ async function buildDraftDataUpdate({ previousPath, currentPath, currentManifest
 
   let previous = null
   try { previous = readGzipJson(await fs.readFile(previousPath)) } catch { /* First release or no compatible base. */ }
+  if (previous && previous.patch === current.patch && !hasSignificantDataChange(previous, current)) {
+    const unchanged = {
+      formatVersion: 1,
+      kind: 'unchanged',
+      patch: current.patch,
+      generatedAt: current.generatedAt,
+      revision: previous.revision || computeRevision(previous),
+      changedCells: 0,
+      reason: 'no_win_rate_change_reached_one_percentage_point',
+    }
+    await writeAtomic(path.join(outputDirectory, 'draft-data-update-current.json'), Buffer.from(JSON.stringify(unchanged, null, 2)))
+    return unchanged
+  }
   const comparison = makeDelta(previous, current)
   if (comparison?.kind === 'unchanged') {
     const unchanged = { formatVersion: 1, kind: 'unchanged', patch: current.patch, generatedAt: current.generatedAt, revision: currentRevision, changedCells: 0 }
@@ -113,4 +213,10 @@ if (require.main === module) {
   })
 }
 
-module.exports = { buildDraftDataUpdate, makeDelta }
+module.exports = {
+  WIN_RATE_PUBLISH_THRESHOLD,
+  buildDraftDataUpdate,
+  hasSignificantDataChange,
+  makeDelta,
+  retainSubthresholdWinRates,
+}
