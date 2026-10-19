@@ -23,9 +23,9 @@ const ROLE_TO_LANE = Object.fromEntries(Object.entries(LANE_TO_ROLE).map(([lane,
 const SLUG_OVERRIDES = { monkeyking: 'wukong', nunu: 'nunu', nunuandwillump: 'nunu', renata: 'renata', renataglasc: 'renata' }
 const REQUEST_GAP_MS = 1000
 const MAX_RETRIES = 5
-// This one page returned a server-error document during the current 16.20
-// crawl. Keep its matchup cell explicitly unavailable; draft will use lane WR.
-const OMITTED_MATCHUP_CELLS = new Set(['16.20:MASTER:Bot:876'])
+// These two Lillia bottom pages returned server-error documents during the
+// current 16.20 crawl. Keep the cells explicitly unavailable; draft will use lane WR.
+const OMITTED_MATCHUP_CELLS = new Set(['16.20:MASTER:Bot:876', '16.20:MASTER+:Bot:876'])
 const isOmittedMatchup = ({ patch, rank, lane, championId }) => OMITTED_MATCHUP_CELLS.has(`${patch}:${rank}:${lane}:${championId}`)
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))

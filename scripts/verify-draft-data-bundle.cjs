@@ -9,7 +9,7 @@ const bundlePath = path.join(root, 'data', 'draft-data-current.json.gz')
 const manifestPath = path.join(root, 'data', 'draft-data-current.manifest.json')
 const ranksExpected = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'EMERALD+', 'DIAMOND', 'DIAMOND+', 'MASTER', 'MASTER+', 'GRANDMASTER', 'CHALLENGER']
 const lanesExpected = ['Top', 'Mid', 'Bot']
-const omittedMatchupCells = new Set(['16.20:MASTER:Bot:876'])
+const omittedMatchupCells = new Set(['16.20:MASTER:Bot:876', '16.20:MASTER+:Bot:876'])
 const fail = message => { throw new Error(message) }
 
 function main() {

@@ -10,7 +10,7 @@ Each successful snapshot is immutable in a GitHub Release. A new game patch alwa
 
 If a scrape or validation fails, no release is published and the prior `latest.json` remains active. A retry reuses completed, validated page checkpoints and retries only missing or unavailable pages; it does not repeat the full crawl. After a successful run, those checkpoints are cleared so the next daily run refreshes the statistics instead of treating an old same-patch scrape as current.
 
-For patch 16.20 only, the Master-tier Lillia-vs-Bot matchup cell is explicitly omitted because its source page returned a server-error document. Tayron treats that one cell as unavailable and falls back to the general lane win rate; it does not fabricate or reuse a matchup rate for it.
+For patch 16.20 only, the Master and Master+ Lillia-vs-Bot matchup cells are explicitly omitted because their source pages returned server-error documents. Tayron treats those cells as unavailable and falls back to the general lane win rate; it does not fabricate or reuse matchup rates for them.
 
 ## Required repository secret
 
