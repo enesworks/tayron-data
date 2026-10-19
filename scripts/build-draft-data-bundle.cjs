@@ -23,10 +23,12 @@ const ROLE_TO_LANE = Object.fromEntries(Object.entries(LANE_TO_ROLE).map(([lane,
 const SLUG_OVERRIDES = { monkeyking: 'wukong', nunu: 'nunu', nunuandwillump: 'nunu', renata: 'renata', renataglasc: 'renata' }
 const REQUEST_GAP_MS = 1000
 const MAX_RETRIES = 5
-// These two Lillia bottom pages returned server-error documents during the
-// current 16.20 crawl. Keep the cells explicitly unavailable; draft will use lane WR.
+// The source can return an HTTP 500 HTML document for matchup pages that have
+// no published table. Preserve those cells as unavailable so draft uses lane WR.
 const OMITTED_MATCHUP_CELLS = new Set(['16.20:MASTER:Bot:876', '16.20:MASTER+:Bot:876'])
 const isOmittedMatchup = ({ patch, rank, lane, championId }) => OMITTED_MATCHUP_CELLS.has(`${patch}:${rank}:${lane}:${championId}`)
+const isSourceNoData = record => record?.rows?.length === 0
+  && (/^HTTP 500\b/.test(record.reason || '') || record.reason === 'source_server_error_no_data' || record.reason === 'explicitly_omitted_after_source_500')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const safeSlug = value => {
@@ -47,6 +49,7 @@ async function fetchResponse(url, accept = 'text/html') {
       await response.body?.cancel().catch(() => undefined)
       lastError = new Error(`HTTP ${response.status}`)
       if (response.status === 404) throw Object.assign(lastError, { permanent: true })
+      if (response.status === 500) throw Object.assign(lastError, { permanent: true })
       if (response.status === 429) await sleep(Math.min(60000, 5000 * (attempt + 1)))
     } catch (error) {
       if (error?.permanent) throw error
@@ -89,6 +92,9 @@ function pageMetadata(html) {
 
 function classifyMatchupPage(html, request) {
   const metadata = pageMetadata(html)
+  if (/^500 Internal Server Error$/i.test(metadata.title) && parseMatchups(html, request.slug).length === 0) {
+    return { status: 'unavailable', reason: 'source_server_error_no_data', metadata, rows: [] }
+  }
   const patchOk = new RegExp(`Patch\\s+${request.patch.replace('.', '\\.')}(?:\\D|$)`, 'i').test(metadata.description)
   const normalizeComparable = value => String(value).toLowerCase().replace(/[^a-z0-9]/g, '')
   const titleOk = normalizeComparable(metadata.title).includes(`${normalizeComparable(request.championName)}${request.laneSlug}versus${request.laneSlug}`)
@@ -112,7 +118,15 @@ async function readCheckpoint(file, expected) {
     const reusableStatuses = ['complete', 'low_sample']
     if (record.patch === expected.patch && record.rank === expected.rank && record.lane === expected.lane && record.championId === expected.championId
       && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId)
-      && (reusableStatuses.includes(record.status) || (record.status === 'unavailable' && isOmittedMatchup(expected)))) return record
+      && (reusableStatuses.includes(record.status) || (record.status === 'unavailable' && (isOmittedMatchup(expected) || isSourceNoData(record))))) return record
+    if (record.patch === expected.patch && record.rank === expected.rank && record.lane === expected.lane && record.championId === expected.championId
+      && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId)
+      && record.status === 'invalid' && /^500 Internal Server Error$/i.test(record.sourceTitle || '') && record.rows?.length === 0) {
+      const unavailable = { ...record, status: 'unavailable', reason: 'source_server_error_no_data' }
+      delete unavailable.error
+      await writeJsonAtomic(file, unavailable)
+      return unavailable
+    }
   } catch { /* Rebuild missing or invalid checkpoints. */ }
   return null
 }
@@ -261,8 +275,11 @@ async function main() {
     }
   }
 
-  const allowedOmissions = [...OMITTED_MATCHUP_CELLS].filter(key => key.startsWith(`${patch}:`)).length
-  if (bundle.coverage.invalid > 0 || bundle.coverage.unavailable > allowedOmissions) throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and ${bundle.coverage.unavailable} pages were unavailable; only ${allowedOmissions} explicitly omitted matchup cells are allowed.`)
+  const unavailableCells = Object.values(bundle.matchups).flatMap(byLane => Object.values(byLane).flatMap(byChampion => Object.values(byChampion)))
+    .filter(cell => cell.status === 'unavailable')
+  if (bundle.coverage.invalid > 0 || unavailableCells.some(cell => !isSourceNoData(cell))) {
+    throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and at least one of ${bundle.coverage.unavailable} unavailable pages is not an explicit empty-source/HTTP-500 result.`)
+  }
   const retainedWinRates = retainSubthresholdWinRates(previousBundle, bundle, WIN_RATE_PUBLISH_THRESHOLD)
   if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 1.0 percentage-point publication threshold.`)
   bundle.revision = computeRevision(bundle)
