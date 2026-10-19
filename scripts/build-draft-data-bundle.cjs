@@ -165,6 +165,68 @@ function classifyItemBuildPage(html, request) {
   return { status: 'ready', games, winRate, blocks, metadata }
 }
 
+function classifyItemBuildData(data, request, itemCatalog) {
+  if (data?.response?.valid !== true || !data.itemSets || !itemCatalog?.size) {
+    return { status: 'unavailable', reason: 'source_data_invalid', games: 0, winRate: null, blocks: [] }
+  }
+  const parseSet = (rows, expectedLength) => (Array.isArray(rows) ? rows : []).flatMap(row => {
+    if (!Array.isArray(row) || typeof row[0] !== 'string') return []
+    const ids = row[0].split('_').map(Number)
+    const games = Number(row[1])
+    const wins = Number(row[2])
+    if (ids.length !== expectedLength || ids.some(id => !Number.isSafeInteger(id) || !itemCatalog.has(id))
+      || new Set(ids).size !== ids.length || !Number.isSafeInteger(games) || games < 1
+      || !Number.isSafeInteger(wins) || wins < 0 || wins > games) return []
+    return [{ ids, games, wins, winRate: wins / games }]
+  })
+  let selected = null
+  for (const length of [5, 4, 3]) {
+    selected = parseSet(data.itemSets[`itemSet${length}`], length).filter(row => row.games >= MIN_ITEM_BUILD_GAMES)
+      .sort((a, b) => b.games - a.games || b.winRate - a.winRate || a.ids.join('_').localeCompare(b.ids.join('_')))[0]
+    if (selected) break
+  }
+  if (!selected) return { status: 'insufficient', reason: 'no_popular_build_with_minimum_sample', games: 0, winRate: null, blocks: [] }
+  const bootIds = (Array.isArray(data.itemSets.itemBootSet1) ? data.itemSets.itemBootSet1 : []).slice(0, 8)
+    .flatMap(row => typeof row?.[0] === 'string' ? row[0].split('_').map(Number) : [])
+  const boot = bootIds.find(id => itemCatalog.has(id) && itemCatalog.get(id)?.isBoot)
+  const ids = [...selected.ids]
+  if (boot && !ids.includes(boot)) ids.splice(Math.min(1, ids.length), 0, boot)
+  const block = { type: 'Most Picked Build', items: ids.map(id => ({ id, name: itemCatalog.get(id).name })) }
+  return { status: 'ready', games: selected.games, winRate: selected.winRate, blocks: [block], reason: null }
+}
+
+async function fetchItemBuildData(url) {
+  let lastError
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: 'application/json', 'User-Agent': 'Tayron-Item-Data/1.0' },
+        signal: AbortSignal.timeout(20000),
+      })
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new Error(`HTTP ${response.status}`)
+        await response.body?.cancel().catch(() => undefined)
+        await sleep(Math.min(30000, 1000 * (attempt + 1) ** 2))
+        continue
+      }
+      if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { permanent: true })
+      return await response.json()
+    } catch (error) {
+      if (error?.permanent) throw error
+      lastError = error
+      if (attempt < MAX_RETRIES - 1) await sleep(Math.min(30000, 1000 * (attempt + 1) ** 2))
+    }
+  }
+  throw lastError || new Error('Item build request failed')
+}
+
+function itemBuildSourceUrl(champion, patch, laneSlug) {
+  const url = new URL('https://a1.lolalytics.com/mega/')
+  url.search = new URLSearchParams({ ep: 'build-itemset', p: 'd', v: '1', patch, c: champion.slug,
+    lane: laneSlug, tier: 'all', queue: '420', region: 'all' }).toString()
+  return url.toString()
+}
+
 function csvCell(value) {
   const text = String(value ?? '')
   return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
@@ -175,7 +237,7 @@ async function readItemCheckpoint(file, expected) {
     const record = JSON.parse(await fs.readFile(file, 'utf8'))
     if (record.patch === expected.patch && record.lane === expected.lane && record.championId === expected.championId
       && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId)
-      && record.sourceUrl && ['ready', 'insufficient', 'unavailable'].includes(record.status)) return record
+      && record.sourceUrl === expected.sourceUrl && ['ready', 'insufficient', 'unavailable'].includes(record.status)) return record
   } catch { /* Rebuild missing or invalid checkpoints. */ }
   return null
 }
@@ -260,6 +322,9 @@ async function main() {
   const ddragonVersion = versions[0]
   const patch = ddragonVersion.split('.').slice(0, 2).join('.')
   const championDocument = await (await fetchResponse(`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/data/en_US/champion.json`, 'application/json')).json()
+  const itemDocument = await (await fetchResponse(`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/data/en_US/item.json`, 'application/json')).json()
+  const itemCatalog = new Map(Object.entries(itemDocument.data || {}).filter(([, item]) => item.maps?.['11'] === true && item.inStore !== false)
+    .map(([id, item]) => [Number(id), { name: item.name, isBoot: item.tags?.includes('Boots') === true }]))
   const champions = Object.values(championDocument.data).map(champion => ({
     key: Number(champion.key), id: champion.id, slug: safeSlug(champion.id), name: champion.name, title: champion.title, tags: champion.tags,
   })).sort((a, b) => a.key - b.key)
@@ -279,7 +344,7 @@ async function main() {
     metaCoverage: roleData.metaCoverage,
     matchups: {},
     itemBuilds: {},
-    itemBuildCoverage: { planned: ITEM_LANES.length * champions.length, ready: 0, insufficient: 0, unavailable: 0, invalid: 0 },
+    itemBuildCoverage: { champions: champions.length, championCoverage: 0, planned: ITEM_LANES.length * champions.length, readyLaneCells: 0, ready: 0, insufficient: 0, unavailable: 0, invalid: 0 },
     coverage: { planned: TIERS.length * LANES.length * champions.length, complete: 0, lowSample: 0, unavailable: 0, invalid: 0 },
   }
 
@@ -350,22 +415,18 @@ async function main() {
   if (bundle.coverage.invalid > 0 || unavailableCells.some(cell => !isSourceNoData(cell))) {
     throw new Error(`Refusing to publish: ${bundle.coverage.invalid} pages failed source/filter validation and at least one of ${bundle.coverage.unavailable} unavailable pages is not an explicit empty-source/HTTP-500 result.`)
   }
-  const itemCsvRows = [['patch', 'championId', 'champion', 'lane', 'games', 'winRate', 'startingItems', 'coreItems', 'item4', 'item5', 'item6']]
+  const itemCsvRows = [['patch', 'championId', 'champion', 'lane', 'games', 'wins', 'winRate', 'items']]
   for (const [lane, laneSlug] of ITEM_LANES) {
     bundle.itemBuilds[lane] = {}
     for (const champion of champions) {
-      const expected = { patch, lane, championId: champion.key, ...(process.env.TAYRON_SCRAPE_ID ? { scrapeId: process.env.TAYRON_SCRAPE_ID } : {}) }
+      const sourceUrl = itemBuildSourceUrl(champion, patch, laneSlug)
+      const expected = { patch, lane, championId: champion.key, sourceUrl, ...(process.env.TAYRON_SCRAPE_ID ? { scrapeId: process.env.TAYRON_SCRAPE_ID } : {}) }
       const checkpoint = path.join(STAGING, patch, 'item-builds', lane, champion.key + '.json')
       let record = await readItemCheckpoint(checkpoint, expected)
       if (!record) {
-        const url = new URL('https://lolalytics.com/lol/' + champion.slug + '/build/')
-        url.search = new URLSearchParams({ patch, tier: 'all', lane: laneSlug, region: 'all', queue: '420' }).toString()
-        const sourceUrl = url.toString()
         try {
-          const response = await fetchResponse(url)
-          const html = await response.text()
-          if (Buffer.byteLength(html) > 5 * 1024 * 1024) throw new Error('source_response_too_large')
-          const result = classifyItemBuildPage(html, { ...expected, championName: champion.name, laneSlug })
+          const data = await fetchItemBuildData(sourceUrl)
+          const result = classifyItemBuildData(data, { ...expected, championName: champion.name, laneSlug }, itemCatalog)
           record = { ...expected, status: result.status, games: result.games || 0, winRate: result.winRate ?? null,
             blocks: result.blocks || [], sourceUrl, sourceTitle: result.metadata.title, fetchedAt: new Date().toISOString(), reason: result.reason || null }
           if (record.status === 'invalid') record.error = result.reason
@@ -382,14 +443,15 @@ async function main() {
         sourceUrl: record.sourceUrl, fetchedAt: record.fetchedAt, reason: record.reason || null,
       }
       if (record.status === 'ready') {
-        const byType = Object.fromEntries(record.blocks.map(block => [block.type, block.items.map(item => item.id)]))
-        itemCsvRows.push([patch, champion.key, champion.name, lane, record.games, record.winRate,
-          JSON.stringify(byType['Starting Items'] || []), JSON.stringify(byType['Core Items'] || []),
-          JSON.stringify(byType['Item 4'] || []), JSON.stringify(byType['Item 5'] || []), JSON.stringify(byType['Item 6'] || [])])
+        const items = record.blocks.flatMap(block => block.items.map(item => item.id))
+        itemCsvRows.push([patch, champion.key, champion.name, lane, record.games, Math.round(record.games * record.winRate), record.winRate, JSON.stringify(items)])
       }
     }
     console.log('Item builds ' + lane + ': ' + champions.length + ' champion cells')
   }
+  bundle.itemBuildCoverage.readyLaneCells = bundle.itemBuildCoverage.ready
+  bundle.itemBuildCoverage.championCoverage = champions.filter(champion => ITEM_LANES.some(([lane]) => bundle.itemBuilds[lane][champion.key].status === 'ready')).length
+  if (bundle.itemBuildCoverage.championCoverage !== champions.length) throw new Error(`Only ${bundle.itemBuildCoverage.championCoverage}/${champions.length} champions have a sample-qualified item build`)
   const unavailableItemBuilds = Object.values(bundle.itemBuilds).flatMap(byChampion => Object.values(byChampion)).filter(cell => cell.status === 'unavailable')
   if (bundle.itemBuildCoverage.invalid > 0 || unavailableItemBuilds.some(cell => !['source_server_error_no_data', 'source_page_not_found'].includes(cell.reason))) {
     throw new Error('Refusing to publish: item-build source/filter coverage is invalid or incomplete.')
@@ -448,4 +510,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { classifyItemBuildPage, classifyMatchupPage, parseMatchups }
+module.exports = { classifyItemBuildData, classifyItemBuildPage, classifyMatchupPage, itemBuildSourceUrl, parseMatchups }

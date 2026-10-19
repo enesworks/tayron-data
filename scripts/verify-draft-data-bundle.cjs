@@ -71,23 +71,29 @@ function main() {
     const coverage = manifest.itemBuildCoverage
     const expectedItems = bundle.champions.length * lanes.length
     if (!coverage || coverage.planned !== expectedItems
+      || coverage.champions !== bundle.champions.length || coverage.championCoverage !== bundle.champions.length
+      || coverage.readyLaneCells !== coverage.ready
       || coverage.ready + coverage.insufficient + coverage.unavailable !== expectedItems || coverage.invalid !== 0) fail('Item-build coverage is incomplete')
     let ready = 0
+    const readyChampions = new Set()
     for (const lane of lanes) for (const champion of bundle.champions) {
       const cell = bundle.itemBuilds[lane]?.[champion.key]
       if (!cell || !['ready', 'insufficient', 'unavailable'].includes(cell.status) || !Number.isSafeInteger(cell.games) || cell.games < 0
         || cell.winRate != null && (!Number.isFinite(cell.winRate) || cell.winRate < 0 || cell.winRate > 1) || !Array.isArray(cell.blocks)) fail(`Invalid item build ${lane}/${champion.id}`)
       if (cell.status === 'ready' && cell.games < 100) fail(`Item-build sample is below minimum for ${lane}/${champion.id}`)
-      if (cell.status === 'ready') ready += 1
+      if (cell.status === 'ready') { ready += 1; readyChampions.add(champion.key) }
       const source = new URL(cell.sourceUrl)
       const expectedLane = ({ Top: 'top', Jungle: 'jungle', Mid: 'middle', Bot: 'bottom', Support: 'support' })[lane]
-      if (source.hostname !== 'lolalytics.com' || source.searchParams.get('patch') !== bundle.patch
-        || source.searchParams.get('lane') !== expectedLane || source.searchParams.get('tier') !== 'all') fail(`Item-build source filters mismatch: ${lane}/${champion.id}`)
+      if (source.hostname !== 'a1.lolalytics.com' || source.pathname !== '/mega/' || source.searchParams.get('ep') !== 'build-itemset'
+        || source.searchParams.get('p') !== 'd' || source.searchParams.get('v') !== '1'
+        || source.searchParams.get('patch') !== bundle.patch || source.searchParams.get('c') !== champion.slug
+        || source.searchParams.get('lane') !== expectedLane || source.searchParams.get('tier') !== 'all'
+        || source.searchParams.get('queue') !== '420' || source.searchParams.get('region') !== 'all') fail(`Item-build source filters mismatch: ${lane}/${champion.id}`)
       for (const block of cell.blocks) {
         if (!block.type || !Array.isArray(block.items) || block.items.some(item => !Number.isSafeInteger(item.id) || item.id < 1 || !item.name)) fail(`Invalid item block ${lane}/${champion.id}`)
       }
     }
-    if (ready !== coverage.ready) fail('Item-build ready count differs from its manifest')
+    if (ready !== coverage.ready || readyChampions.size !== bundle.champions.length) fail('Item-build ready count differs from its manifest or champion coverage')
   }
   console.log(`Verified patch ${bundle.patch}: ${bundle.champions.length} champions, ${ranksExpected.length} rank scopes, ${lanesExpected.join('/')} matchups (${checkedCells} cells).`)
   console.log(`Complete=${manifest.coverage.complete}; low-sample (explicit)=${manifest.coverage.lowSample}; role-metadata missing source cells=${ranksExpected.reduce((sum, rank) => sum + bundle.meta[rank].missing.length, 0)}.`)
