@@ -3,7 +3,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const zlib = require('node:zlib')
 const { computeRevision, readGzipJson } = require('../electron/draft-data-format.cjs')
-const { buildDraftDataUpdate, retainSubthresholdWinRates, WIN_RATE_PUBLISH_THRESHOLD } = require('./create-draft-data-update.cjs')
+const { buildDraftDataUpdate } = require('./create-draft-data-update.cjs')
 
 const ROOT = path.resolve(__dirname, '..')
 const STAGING = process.env.TAYRON_DATA_STAGING_DIR
@@ -460,8 +460,6 @@ async function main() {
   const csvTemporary = csvPath + '.' + process.pid + '.tmp'
   await fs.writeFile(csvTemporary, itemCsvRows.map(row => row.map(csvCell).join(',')).join('\n') + '\n', 'utf8')
   await fs.rename(csvTemporary, csvPath)
-  const retainedWinRates = retainSubthresholdWinRates(previousBundle, bundle, WIN_RATE_PUBLISH_THRESHOLD)
-  if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 2.0 percentage-point threshold.`)
   bundle.revision = computeRevision(bundle)
   const json = Buffer.from(JSON.stringify(bundle))
   const compressed = zlib.gzipSync(json, { level: 9 })
