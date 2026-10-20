@@ -30,7 +30,18 @@ function semanticBundle(bundle) {
       }
     }
   }
-  return {
+  const itemBuilds = {}
+  for (const lane of Object.keys(bundle.itemBuilds || {}).sort()) {
+    itemBuilds[lane] = {}
+    for (const championId of Object.keys(bundle.itemBuilds[lane] || {}).sort((a, b) => Number(a) - Number(b))) {
+      const cell = bundle.itemBuilds[lane][championId]
+      itemBuilds[lane][championId] = {
+        status: cell.status, games: cell.games, winRate: cell.winRate,
+        blocks: (cell.blocks || []).map(block => ({ type: block.type, items: [...(block.items || [])].map(item => ({ id: item.id, name: item.name })) })),
+      }
+    }
+  }
+  const semantic = {
     schemaVersion: bundle.schemaVersion,
     patch: bundle.patch,
     dataDragonVersion: bundle.dataDragonVersion,
@@ -38,6 +49,8 @@ function semanticBundle(bundle) {
     meta,
     matchups,
   }
+  if (bundle.itemBuilds) semantic.itemBuilds = itemBuilds
+  return semantic
 }
 
 function computeRevision(bundle) {
@@ -57,11 +70,17 @@ function applyDraftDataDelta(baseBundle, delta) {
   next.generatedAt = delta.generatedAt
   next.revision = delta.targetRevision
   next.coverage = delta.coverage
+  if (delta.itemBuildCoverage) next.itemBuildCoverage = delta.itemBuildCoverage
   for (const [rank, snapshot] of Object.entries(delta.metaReplacements || {})) next.meta[rank] = snapshot
   for (const replacement of delta.matchupReplacements || []) {
     const [rank, lane, championId, cell] = replacement
     if (!next.matchups?.[rank]?.[lane]) throw new Error(`Delta references unknown grid ${rank}/${lane}`)
     next.matchups[rank][lane][championId] = cell
+  }
+  for (const replacement of delta.itemBuildReplacements || []) {
+    const [lane, championId, cell] = replacement
+    if (!next.itemBuilds?.[lane]) throw new Error(`Delta references unknown item-build lane ${lane}`)
+    next.itemBuilds[lane][championId] = cell
   }
   if (computeRevision(next) !== delta.targetRevision) throw new Error('Applied delta does not produce the declared target revision')
   return next
