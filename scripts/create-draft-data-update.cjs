@@ -3,7 +3,8 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const zlib = require('node:zlib')
 const { canonical, computeRevision, readGzipJson } = require('../electron/draft-data-format.cjs')
-const WIN_RATE_PUBLISH_THRESHOLD = 0.01
+const WIN_RATE_PUBLISH_THRESHOLD = 0.02
+const MIN_CHANGED_CHAMPIONS_TO_PUBLISH = 30
 
 function metaRowMap(snapshot) {
   return new Map((snapshot?.rows || []).map(row => [`${row[0]}:${row[1]}`, row]))
@@ -18,25 +19,37 @@ function sameItemBuild(left, right) {
   return canonical(project(left)) === canonical(project(right))
 }
 
-function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD) {
+function semanticRuneCell(cell) { return { status: cell?.status, page: cell?.page } }
+
+function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD, minChangedChampions = MIN_CHANGED_CHAMPIONS_TO_PUBLISH) {
   if (!previous || previous.schemaVersion !== current.schemaVersion || previous.patch !== current.patch
     || canonical(previous.champions) !== canonical(current.champions)) return true
 
+  const changedWinRateChampions = new Set()
+  const changedMetadataChampions = new Set()
   const ranks = new Set([...Object.keys(previous.meta || {}), ...Object.keys(current.meta || {})])
   for (const rank of ranks) {
     const before = previous.meta?.[rank]
     const after = current.meta?.[rank]
-    if (!before || !after || canonical(before.missing || []) !== canonical(after.missing || [])) return true
+    if (!before || !after) return true
+    const beforeMissing = new Set((before.missing || []).map(([id, lane]) => `${id}:${lane}`))
+    const afterMissing = new Set((after.missing || []).map(([id, lane]) => `${id}:${lane}`))
+    for (const key of new Set([...beforeMissing, ...afterMissing])) {
+      if (beforeMissing.has(key) !== afterMissing.has(key)) changedMetadataChampions.add(Number(key.split(':')[0]))
+    }
     const oldRows = metaRowMap(before)
     const newRows = metaRowMap(after)
-    if (oldRows.size !== newRows.size) return true
+    for (const key of new Set([...oldRows.keys(), ...newRows.keys()])) {
+      if (oldRows.has(key) !== newRows.has(key)) changedMetadataChampions.add(Number(key.split(':')[0]))
+    }
     for (const [key, row] of newRows) {
       const old = oldRows.get(key)
-      if (!old || Math.abs(row[3] - old[3]) >= threshold) return true
+      if (!old) continue
+      if (Math.abs(row[3] - old[3]) >= threshold) changedWinRateChampions.add(Number(row[0]))
       // Changes to role, tier, or strong/weak matchup metadata remain publishable;
       // a games-count-only refresh does not trigger a release.
       if (canonical([row[1], row[4], row[5], row[6], row[7], row[8]])
-        !== canonical([old[1], old[4], old[5], old[6], old[7], old[8]])) return true
+        !== canonical([old[1], old[4], old[5], old[6], old[7], old[8]])) changedMetadataChampions.add(Number(row[0]))
     }
   }
 
@@ -50,25 +63,51 @@ function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLIS
       for (const championId of championIds) {
         const oldCell = oldCells[championId]
         const newCell = newCells[championId]
-        if (!oldCell || !newCell || oldCell.status !== newCell.status) return true
+        if (!oldCell || !newCell || oldCell.status !== newCell.status) {
+          changedMetadataChampions.add(Number(championId))
+          continue
+        }
         const oldRows = matchupRowMap(oldCell)
         const newRows = matchupRowMap(newCell)
-        if (oldRows.size !== newRows.size) return true
+        if (oldRows.size !== newRows.size) changedMetadataChampions.add(Number(championId))
         for (const [slug, row] of newRows) {
           const old = oldRows.get(slug)
-          if (!old || Math.abs(row[1] - old[1]) >= threshold) return true
+          if (old && Math.abs(row[1] - old[1]) >= threshold) changedWinRateChampions.add(Number(championId))
         }
       }
     }
   }
+  if (changedWinRateChampions.size >= minChangedChampions) return true
+
+  const changedItemBuildChampions = new Set()
+  const previousItemIds = new Set()
+  const currentItemIds = new Set()
   for (const lane of new Set([...Object.keys(previous.itemBuilds || {}), ...Object.keys(current.itemBuilds || {})])) {
     const before = previous.itemBuilds?.[lane] || {}
     const after = current.itemBuilds?.[lane] || {}
     for (const championId of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      if (!sameItemBuild(before[championId], after[championId])) return true
+      for (const block of before[championId]?.blocks || []) for (const item of block.items || []) previousItemIds.add(Number(item.id))
+      for (const block of after[championId]?.blocks || []) for (const item of block.items || []) currentItemIds.add(Number(item.id))
+      if (!sameItemBuild(before[championId], after[championId])) changedItemBuildChampions.add(Number(championId))
     }
   }
-  return false
+  if ([...currentItemIds].some(id => !previousItemIds.has(id)) || changedItemBuildChampions.size >= minChangedChampions) return true
+
+  const previousRunes = previous.runeData
+  const currentRunes = current.runeData
+  if (Boolean(previousRunes) !== Boolean(currentRunes)) return true
+  if (currentRunes) {
+    if (canonical({ styles: previousRunes.styles, perks: previousRunes.perks, statModIds: previousRunes.statModIds })
+      !== canonical({ styles: currentRunes.styles, perks: currentRunes.perks, statModIds: currentRunes.statModIds })) return true
+    const changedRuneChampions = new Set()
+    for (const championId of new Set([...Object.keys(previousRunes.builds || {}), ...Object.keys(currentRunes.builds || {})])) {
+      if (canonical(Object.fromEntries(Object.keys(previousRunes.builds?.[championId] || {}).map(lane => [lane, semanticRuneCell(previousRunes.builds[championId][lane])]).sort()))
+        !== canonical(Object.fromEntries(Object.keys(currentRunes.builds?.[championId] || {}).map(lane => [lane, semanticRuneCell(currentRunes.builds[championId][lane])]).sort()))) changedRuneChampions.add(Number(championId))
+    }
+    if (changedRuneChampions.size >= minChangedChampions) return true
+  }
+
+  return changedMetadataChampions.size >= minChangedChampions
 }
 
 function retainSubthresholdWinRates(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD) {
@@ -128,6 +167,7 @@ function makeDelta(previous, current) {
     metaReplacements: {},
     matchupReplacements: [],
     itemBuildReplacements: [],
+    runeDataReplacement: null,
   }
   for (const rank of Object.keys(current.meta).sort()) {
     const before = previous.meta?.[rank]
@@ -150,6 +190,7 @@ function makeDelta(previous, current) {
       if (!before || !sameItemBuildData(before, cell)) delta.itemBuildReplacements.push([lane, Number(championId), cell])
     }
   }
+  if (current.runeData && canonical(previous.runeData) !== canonical(current.runeData)) delta.runeDataReplacement = current.runeData
   if (delta.targetRevision === delta.baseRevision) return { kind: 'unchanged', delta: null }
   return { kind: 'delta', delta }
 }
@@ -178,7 +219,7 @@ async function buildDraftDataUpdate({ previousPath, currentPath, currentManifest
       generatedAt: current.generatedAt,
       revision: previous.revision || computeRevision(previous),
       changedCells: 0,
-      reason: 'no_win_rate_change_reached_one_percentage_point',
+      reason: 'significant_same_patch_change_threshold_not_met',
     }
     await writeAtomic(path.join(outputDirectory, 'draft-data-update-current.json'), Buffer.from(JSON.stringify(unchanged, null, 2)))
     return unchanged

@@ -50,14 +50,24 @@ jobs:
             gh release download "$previous_tag" --repo enesworks/tayron-data --pattern draft-data-current.json.gz --dir data
           fi
 
-      - name: Build all ranks and matchups
+      - name: Build all ranks, matchups and item recommendations
         env:
           TAYRON_DATA_STAGING_DIR: ${{ github.workspace }}/.cache/draft-data-staging
+          TAYRON_DEFER_UPDATE: '1'
         run: node scripts/build-draft-data-bundle.cjs
 
-      - name: Verify complete snapshot and build update package
+      - name: Build champion and lane rune recommendations
+        env:
+          TAYRON_DATA_STAGING_DIR: ${{ github.workspace }}/.cache/draft-data-staging
+        run: node scripts/build-rune-data-bundle.cjs
+
+      - name: Attach rune data and create signed update package
+        run: node scripts/attach-rune-data.cjs
+
+      - name: Verify complete snapshot, item builds and rune data
         run: |
           node scripts/verify-draft-data-bundle.cjs
+          node scripts/verify-rune-data-bundle.cjs
 
       - name: Publish immutable data release and signed feed
         if: ${{ success() }}

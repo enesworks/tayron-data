@@ -22,6 +22,8 @@ const payload = {
   fullSha256: update.fullSha256,
   fullCompressedBytes: update.fullCompressedBytes,
   ...(manifest.itemBuildCoverage ? { itemBuildCoverage: manifest.itemBuildCoverage } : {}),
+  ...(manifest.runeRevision ? { runeRevision: manifest.runeRevision } : {}),
+  ...(manifest.runeCoverage ? { runeCoverage: manifest.runeCoverage } : {}),
 }
 const canonical = JSON.stringify(Object.fromEntries(Object.keys(payload).sort().map(key => [key, payload[key]])))
 const privateKey = process.env.TAYRON_DATA_SIGNING_KEY
