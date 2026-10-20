@@ -4,6 +4,7 @@ const path = require('node:path')
 
 const root = path.resolve(__dirname, '..')
 const update = JSON.parse(fs.readFileSync(path.join(root, 'data', 'draft-data-update-current.json'), 'utf8'))
+const manifest = JSON.parse(fs.readFileSync(path.join(root, 'data', 'draft-data-current.manifest.json'), 'utf8'))
 const tag = `data-${update.revision}`
 const assetUrl = name => `https://github.com/enesworks/tayron-data/releases/download/${tag}/${name}`
 const payload = {
@@ -20,6 +21,7 @@ const payload = {
   fullArtifactUrl: assetUrl(update.fullArtifact),
   fullSha256: update.fullSha256,
   fullCompressedBytes: update.fullCompressedBytes,
+  ...(manifest.itemBuildCoverage ? { itemBuildCoverage: manifest.itemBuildCoverage } : {}),
 }
 const canonical = JSON.stringify(Object.fromEntries(Object.keys(payload).sort().map(key => [key, payload[key]])))
 const privateKey = process.env.TAYRON_DATA_SIGNING_KEY
