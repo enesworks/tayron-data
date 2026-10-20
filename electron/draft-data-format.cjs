@@ -11,6 +11,19 @@ function canonical(value) {
   return JSON.stringify(stable(value))
 }
 
+function semanticRuneData(bundle) {
+  if (!bundle?.runeData) return undefined
+  const runes = bundle.runeData
+  const builds = Object.fromEntries(Object.keys(runes.builds || {}).sort((a, b) => Number(a) - Number(b)).map(championId => [championId,
+    Object.fromEntries(Object.keys(runes.builds[championId] || {}).sort().map(lane => {
+      const cell = runes.builds[championId][lane]
+      return [lane, { status: cell?.status, page: cell?.page }]
+    }))]))
+  return { schemaVersion: runes.schemaVersion, patch: runes.patch, dataDragonVersion: runes.dataDragonVersion,
+    selectionBasis: runes.selectionBasis, minimumGames: runes.minimumGames, champions: runes.champions,
+    styles: runes.styles, perks: runes.perks, statModIds: runes.statModIds, builds }
+}
+
 function semanticBundle(bundle) {
   const meta = Object.fromEntries(Object.keys(bundle.meta || {}).sort().map(rank => {
     const entry = bundle.meta[rank]
@@ -50,6 +63,7 @@ function semanticBundle(bundle) {
     matchups,
   }
   if (bundle.itemBuilds) semantic.itemBuilds = itemBuilds
+  if (bundle.runeData) semantic.runeData = semanticRuneData(bundle)
   return semantic
 }
 
@@ -71,6 +85,7 @@ function applyDraftDataDelta(baseBundle, delta) {
   next.revision = delta.targetRevision
   next.coverage = delta.coverage
   if (delta.itemBuildCoverage) next.itemBuildCoverage = delta.itemBuildCoverage
+  if (delta.runeDataReplacement) next.runeData = delta.runeDataReplacement
   for (const [rank, snapshot] of Object.entries(delta.metaReplacements || {})) next.meta[rank] = snapshot
   for (const replacement of delta.matchupReplacements || []) {
     const [rank, lane, championId, cell] = replacement

@@ -461,7 +461,7 @@ async function main() {
   await fs.writeFile(csvTemporary, itemCsvRows.map(row => row.map(csvCell).join(',')).join('\n') + '\n', 'utf8')
   await fs.rename(csvTemporary, csvPath)
   const retainedWinRates = retainSubthresholdWinRates(previousBundle, bundle, WIN_RATE_PUBLISH_THRESHOLD)
-  if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 1.0 percentage-point publication threshold.`)
+  if (retainedWinRates) console.log(`Retained ${retainedWinRates} same-patch win-rate values below the 2.0 percentage-point threshold.`)
   bundle.revision = computeRevision(bundle)
   const json = Buffer.from(JSON.stringify(bundle))
   const compressed = zlib.gzipSync(json, { level: 9 })
@@ -491,15 +491,16 @@ async function main() {
     sha256: crypto.createHash('sha256').update(compressed).digest('hex'),
   }
   await writeJsonAtomic(path.join(OUTPUT, 'draft-data-current.manifest.json'), manifest)
-  const update = await buildDraftDataUpdate({
-    previousPath,
-    currentPath: output,
-    currentManifestPath: path.join(OUTPUT, 'draft-data-current.manifest.json'),
-    outputDirectory: OUTPUT,
-  })
-  await fs.unlink(previousPath).catch(() => undefined)
+  const update = process.env.TAYRON_DEFER_UPDATE === '1' ? { kind: 'deferred', changedCells: 0 }
+    : await buildDraftDataUpdate({
+      previousPath,
+      currentPath: output,
+      currentManifestPath: path.join(OUTPUT, 'draft-data-current.manifest.json'),
+      outputDirectory: OUTPUT,
+    })
+  if (process.env.TAYRON_DEFER_UPDATE !== '1') await fs.unlink(previousPath).catch(() => undefined)
   console.log(`Wrote ${output}: ${compressed.length} bytes; sha256=${manifest.sha256}`)
-  console.log(`Update ${update.kind}: ${update.changedCells} changed matchup cells; revision=${manifest.revision}`)
+  console.log(`Update ${update.kind}: ${update.changedCells} changed cells; revision=${manifest.revision}`)
   console.log(JSON.stringify(manifest))
 }
 
