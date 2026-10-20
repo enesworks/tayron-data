@@ -110,38 +110,6 @@ function hasSignificantDataChange(previous, current, threshold = WIN_RATE_PUBLIS
   return changedMetadataChampions.size >= minChangedChampions
 }
 
-function retainSubthresholdWinRates(previous, current, threshold = WIN_RATE_PUBLISH_THRESHOLD) {
-  if (!previous || previous.schemaVersion !== current.schemaVersion || previous.patch !== current.patch
-    || canonical(previous.champions) !== canonical(current.champions)) return 0
-  let retained = 0
-  for (const [rank, snapshot] of Object.entries(current.meta || {})) {
-    const oldRows = metaRowMap(previous.meta?.[rank])
-    for (const row of snapshot.rows || []) {
-      const old = oldRows.get(`${row[0]}:${row[1]}`)
-      if (old && Math.abs(row[3] - old[3]) < threshold) {
-        if (row[3] !== old[3]) retained += 1
-        row[3] = old[3]
-      }
-    }
-  }
-  for (const [rank, lanes] of Object.entries(current.matchups || {})) {
-    for (const [lane, cells] of Object.entries(lanes || {})) {
-      const oldCells = previous.matchups?.[rank]?.[lane] || {}
-      for (const [championId, cell] of Object.entries(cells || {})) {
-        const oldRows = matchupRowMap(oldCells[championId])
-        for (const row of cell.rows || []) {
-          const old = oldRows.get(row[0])
-          if (old && Math.abs(row[1] - old[1]) < threshold) {
-            if (row[1] !== old[1]) retained += 1
-            row[1] = old[1]
-          }
-        }
-      }
-    }
-  }
-  return retained
-}
-
 function sameMatchupData(left, right) {
   const sortedRows = rows => [...(rows || [])].sort((a, b) => a[0].localeCompare(b[0]))
   return canonical({ status: left?.status, rows: sortedRows(left?.rows) }) === canonical({ status: right?.status, rows: sortedRows(right?.rows) })
@@ -211,6 +179,9 @@ async function buildDraftDataUpdate({ previousPath, currentPath, currentManifest
 
   let previous = null
   try { previous = readGzipJson(await fs.readFile(previousPath)) } catch { /* First release or no compatible base. */ }
+  // `previous` is the last published release. Keep the fully refreshed sample
+  // in `current` even when it does not pass the gate: the next daily run must
+  // compare against that same published baseline so small changes can accrue.
   if (previous && previous.patch === current.patch && !hasSignificantDataChange(previous, current)) {
     const unchanged = {
       formatVersion: 1,
@@ -284,5 +255,4 @@ module.exports = {
   buildDraftDataUpdate,
   hasSignificantDataChange,
   makeDelta,
-  retainSubthresholdWinRates,
 }
