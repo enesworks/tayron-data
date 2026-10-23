@@ -237,7 +237,10 @@ async function readItemCheckpoint(file, expected) {
     const record = JSON.parse(await fs.readFile(file, 'utf8'))
     if (record.patch === expected.patch && record.lane === expected.lane && record.championId === expected.championId
       && (expected.scrapeId === undefined || record.scrapeId === expected.scrapeId)
-      && record.sourceUrl === expected.sourceUrl && ['ready', 'insufficient', 'unavailable'].includes(record.status)) return record
+      // Item-build sample sizes grow during a patch, and source errors can be transient.
+      // Reuse only qualified builds; pinning insufficient/unavailable cells to a failed
+      // scrape ID would make every retry repeat the same failure without refetching.
+      && record.sourceUrl === expected.sourceUrl && record.status === 'ready') return record
   } catch { /* Rebuild missing or invalid checkpoints. */ }
   return null
 }
@@ -451,6 +454,18 @@ async function main() {
   }
   bundle.itemBuildCoverage.readyLaneCells = bundle.itemBuildCoverage.ready
   bundle.itemBuildCoverage.championCoverage = champions.filter(champion => ITEM_LANES.some(([lane]) => bundle.itemBuilds[lane][champion.key].status === 'ready')).length
+  const itemBuildReasons = new Map()
+  for (const cells of Object.values(bundle.itemBuilds)) {
+    for (const cell of Object.values(cells)) {
+      if (cell.status === 'ready') continue
+      const key = `${cell.status}:${cell.reason || 'no_qualified_build'}`
+      itemBuildReasons.set(key, (itemBuildReasons.get(key) || 0) + 1)
+    }
+  }
+  console.log(`Item-build coverage: champions=${bundle.itemBuildCoverage.championCoverage}/${champions.length}, ready=${bundle.itemBuildCoverage.ready}, insufficient=${bundle.itemBuildCoverage.insufficient}, unavailable=${bundle.itemBuildCoverage.unavailable}, invalid=${bundle.itemBuildCoverage.invalid}`)
+  for (const [reason, count] of [...itemBuildReasons].sort((a, b) => b[1] - a[1])) {
+    console.log(`Item-build not-ready ${reason}: ${count}`)
+  }
   if (bundle.itemBuildCoverage.championCoverage !== champions.length) throw new Error(`Only ${bundle.itemBuildCoverage.championCoverage}/${champions.length} champions have a sample-qualified item build`)
   const unavailableItemBuilds = Object.values(bundle.itemBuilds).flatMap(byChampion => Object.values(byChampion)).filter(cell => cell.status === 'unavailable')
   if (bundle.itemBuildCoverage.invalid > 0 || unavailableItemBuilds.some(cell => !['source_server_error_no_data', 'source_page_not_found'].includes(cell.reason))) {
