@@ -2,17 +2,34 @@
   "payload": {
     "formatVersion": 1,
     "schemaVersion": 1,
-    "patch": "16.20",
-    "generatedAt": "2026-10-19T10:02:52.629Z",
-    "revision": "7d9c3e01ae3207d84babcb52cef11b5da2abba8b14fa396c6be91ed4e76b1351",
+    "patch": "16.21",
+    "generatedAt": "2026-10-24T00:19:37.908Z",
+    "revision": "85174cc2cebe4ce3f7889973320acaf74a5ad2e1c5651d95106235c3429b3e2a",
     "kind": "full",
     "baseRevision": null,
-    "artifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-7d9c3e01ae3207d84babcb52cef11b5da2abba8b14fa396c6be91ed4e76b1351/draft-data-current.json.gz",
-    "sha256": "f79b7b32694cc4331e6ce386d10cc22ec031cff4c255ef8c4649444c179e254c",
-    "compressedBytes": 1026441,
-    "fullArtifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-7d9c3e01ae3207d84babcb52cef11b5da2abba8b14fa396c6be91ed4e76b1351/draft-data-current.json.gz",
-    "fullSha256": "f79b7b32694cc4331e6ce386d10cc22ec031cff4c255ef8c4649444c179e254c",
-    "fullCompressedBytes": 1026441
+    "artifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-85174cc2cebe4ce3f7889973320acaf74a5ad2e1c5651d95106235c3429b3e2a/draft-data-current.json.gz",
+    "sha256": "7d14de8b67ace0ea1d6ed583d5095873bb5c283c2e6aab4db002a320f6f1c209",
+    "compressedBytes": 646679,
+    "fullArtifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-85174cc2cebe4ce3f7889973320acaf74a5ad2e1c5651d95106235c3429b3e2a/draft-data-current.json.gz",
+    "fullSha256": "7d14de8b67ace0ea1d6ed583d5095873bb5c283c2e6aab4db002a320f6f1c209",
+    "fullCompressedBytes": 646679,
+    "itemBuildCoverage": {
+      "champions": 173,
+      "championCoverage": 173,
+      "planned": 865,
+      "readyLaneCells": 415,
+      "ready": 415,
+      "insufficient": 450,
+      "unavailable": 0,
+      "invalid": 0
+    },
+    "runeRevision": "785863063256a7fd64171058ec5fa61742ecb1778ef49ffe1111bf8ecc636441",
+    "runeCoverage": {
+      "champions": 173,
+      "championCoverage": 173,
+      "laneCells": 865,
+      "readyLaneCells": 722
+    }
   },
-  "signature": "LmO03AwnPIWUBrcf0AZJTE73q2jjgd4JKdS5WCBFRTRelIGeAQVz4QVqTsHOaZye4Pnp90qjKRDlF2RP6SPgDA=="
+  "signature": "XvFpcy6z7Lw9LImR8fczQbLd5KO9kB8Nk6AmXoGQ7z2ZuZ43TewOrUeVRwNn+7PRsPpmSZNmQGx97kxi70T4BA=="
 }
