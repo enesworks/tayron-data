@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const crypto = require('node:crypto')
 const path = require('node:path')
+const { canonical } = require('../electron/draft-data-format.cjs')
 
 const root = path.resolve(__dirname, '..')
 const update = JSON.parse(fs.readFileSync(path.join(root, 'data', 'draft-data-update-current.json'), 'utf8'))
@@ -25,9 +26,8 @@ const payload = {
   ...(manifest.runeRevision ? { runeRevision: manifest.runeRevision } : {}),
   ...(manifest.runeCoverage ? { runeCoverage: manifest.runeCoverage } : {}),
 }
-const canonical = JSON.stringify(Object.fromEntries(Object.keys(payload).sort().map(key => [key, payload[key]])))
 const privateKey = process.env.TAYRON_DATA_SIGNING_KEY
 if (!privateKey) throw new Error('TAYRON_DATA_SIGNING_KEY is required')
-const signature = crypto.sign(null, Buffer.from(canonical), privateKey).toString('base64')
+const signature = crypto.sign(null, Buffer.from(canonical(payload)), privateKey).toString('base64')
 fs.writeFileSync(path.join(root, 'latest.json'), `${JSON.stringify({ payload, signature }, null, 2)}\n`)
 console.log(`Signed latest.json for ${payload.patch} revision ${payload.revision}`)
