@@ -80,6 +80,7 @@ jobs:
           patch="$(node -p "require('./data/draft-data-update-current.json').patch")"
           if [ "$kind" != "unchanged" ]; then
             node scripts/sign-latest.cjs
+            node scripts/verify-latest.cjs
             tag="data-${revision}"
             artifact="$(node -p "require('./data/draft-data-update-current.json').artifact")"
             assets=(data/draft-data-current.json.gz data/draft-data-current.manifest.json data/draft-data-update-current.json)
