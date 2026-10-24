@@ -1,0 +1,37 @@
+name: Repair signed data feed
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-signed-data-feed
+  cancel-in-progress: false
+
+jobs:
+  resign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Re-sign the existing feed and verify it
+        env:
+          TAYRON_DATA_SIGNING_KEY: ${{ secrets.TAYRON_DATA_SIGNING_KEY }}
+        run: |
+          node scripts/resign-latest.cjs
+          node scripts/verify-latest.cjs
+      - name: Publish repaired feed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Repair signed data feed"
+            git push origin HEAD:main
+          fi
