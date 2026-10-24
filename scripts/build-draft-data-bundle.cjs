@@ -431,7 +431,7 @@ async function main() {
           const data = await fetchItemBuildData(sourceUrl)
           const result = classifyItemBuildData(data, { ...expected, championName: champion.name, laneSlug }, itemCatalog)
           record = { ...expected, status: result.status, games: result.games || 0, winRate: result.winRate ?? null,
-            blocks: result.blocks || [], sourceUrl, sourceTitle: result.metadata.title, fetchedAt: new Date().toISOString(), reason: result.reason || null }
+          blocks: result.blocks || [], sourceUrl, sourceTitle: result.metadata?.title || null, fetchedAt: new Date().toISOString(), reason: result.reason || null }
           if (record.status === 'invalid') record.error = result.reason
         } catch (error) {
           record = { ...expected, status: 'unavailable', games: 0, winRate: null, blocks: [], sourceUrl, fetchedAt: new Date().toISOString(), reason: error.message }
