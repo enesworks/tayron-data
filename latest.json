@@ -3,33 +3,33 @@
     "formatVersion": 1,
     "schemaVersion": 1,
     "patch": "16.22",
-    "generatedAt": "2026-11-13T12:22:41.360Z",
-    "revision": "371101e1c212e38f9cbfa36ec5efc2dc6154afff36564622b94be1b48a56debc",
+    "generatedAt": "2026-11-14T11:37:29.385Z",
+    "revision": "d8e4669ba27908f947ef9fb0275a01d44a853ba0f43b18fe082db0624abeee8a",
     "kind": "full",
     "baseRevision": null,
-    "artifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-371101e1c212e38f9cbfa36ec5efc2dc6154afff36564622b94be1b48a56debc/draft-data-current.json.gz",
-    "sha256": "46bb3f1401689f330c3a13ad1876fb8a3c2fea97cfef8feca3b961673affa139",
-    "compressedBytes": 971809,
-    "fullArtifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-371101e1c212e38f9cbfa36ec5efc2dc6154afff36564622b94be1b48a56debc/draft-data-current.json.gz",
-    "fullSha256": "46bb3f1401689f330c3a13ad1876fb8a3c2fea97cfef8feca3b961673affa139",
-    "fullCompressedBytes": 971809,
+    "artifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-d8e4669ba27908f947ef9fb0275a01d44a853ba0f43b18fe082db0624abeee8a/draft-data-current.json.gz",
+    "sha256": "4db5f73a225086837f93483b538be64a85e0b4f9b8736524115993848eefacb0",
+    "compressedBytes": 1002778,
+    "fullArtifactUrl": "https://github.com/enesworks/tayron-data/releases/download/data-d8e4669ba27908f947ef9fb0275a01d44a853ba0f43b18fe082db0624abeee8a/draft-data-current.json.gz",
+    "fullSha256": "4db5f73a225086837f93483b538be64a85e0b4f9b8736524115993848eefacb0",
+    "fullCompressedBytes": 1002778,
     "itemBuildCoverage": {
       "champions": 173,
       "championCoverage": 173,
       "planned": 865,
-      "readyLaneCells": 559,
-      "ready": 559,
-      "insufficient": 306,
+      "readyLaneCells": 574,
+      "ready": 574,
+      "insufficient": 291,
       "unavailable": 0,
       "invalid": 0
     },
-    "runeRevision": "30f1907bc640e32816f622a127d81d76eb975b33b4341a2c2e475e9ac9549cef",
+    "runeRevision": "84df05fa295d95e1edd46a216c283281a200ecf429faf9aef5a80c7063bf3025",
     "runeCoverage": {
       "champions": 173,
       "championCoverage": 173,
       "laneCells": 865,
-      "readyLaneCells": 816
+      "readyLaneCells": 827
     }
   },
-  "signature": "KCujtwZnb0VF3LwzdIjkbY/r2JwwHSDaPg3mxehW6He5DKVfp0wrUXAoGhZZ5HmguRa8nkCfwcfhznM0YrRvAg=="
+  "signature": "rBhkmDecoA7foLhgowDaL6lC3nxZak3LZ4G+3uXZqvXrQ0MPdJOUS+Qrb138BGXwtpprnVqDnAvnQvl8UGzjCg=="
 }
